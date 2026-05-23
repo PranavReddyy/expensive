@@ -24,33 +24,25 @@ html, body {
   font-size: 13px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
-  /* Prevent double-tap / gesture zoom on supporting browsers */
-  touch-action: manipulation;
-  -ms-touch-action: manipulation;
-  /* Prevent automatic text size adjustment */
-  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
 }
 
 * { font-family: var(--font); }
 
 button { cursor: pointer; }
 
+/*
+  iOS Safari zooms in on any input with font-size < 16px.
+  user-scalable=no in the viewport meta covers most cases,
+  but setting font-size: 16px here is the bulletproof fallback.
+*/
 input, textarea, select {
   border-radius: 0;
   -webkit-appearance: none;
   appearance: none;
   background: var(--bg);
   color: var(--text);
-}
-
-/*
-  iOS Safari will automatically zoom inputs on focus if the computed
-  font-size is less than 16px. Setting form controls to 16px prevents
-  that zoom while leaving the rest of the layout at your chosen base size.
-*/
-input, textarea, select, button {
-  font-size: 16px; /* prevents iOS focus zoom */
-  -webkit-text-size-adjust: 100%;
+  font-size: 16px;
 }
 
 a { color: inherit; text-decoration: none; }
@@ -59,7 +51,6 @@ a { color: inherit; text-decoration: none; }
 
 ::placeholder { color: var(--muted); }
 
-/* Scrollbar */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #ccc; }
