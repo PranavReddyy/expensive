@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Nav from "../../components/Nav";
 import { supabase } from "../../lib/supabase";
 
@@ -87,6 +87,18 @@ export default function Dashboard() {
     const total = (data || []).reduce((s, e) => s + parseFloat(e.amount), 0);
     setTotalSpent(total);
   }, []);
+
+  // Add at the top of the component
+  const firstInputRef = useRef(null);
+
+  // Add this effect — fires when modal opens
+  useEffect(() => {
+    if (!modal) return;
+    const t = setTimeout(() => {
+      firstInputRef.current?.focus();
+    }, 80); // small delay lets the modal render into the DOM
+    return () => clearTimeout(t);
+  }, [modal]);
 
   useEffect(() => {
     loadCategories();
@@ -399,13 +411,13 @@ export default function Dashboard() {
                 <div style={s.mField}>
                   <label style={s.mLabel}>reason *</label>
                   <input
+                    ref={firstInputRef}
                     style={s.mInput}
                     value={form.reason}
                     onChange={(e) =>
                       setForm((f) => ({ ...f, reason: e.target.value }))
                     }
                     placeholder="e.g. groceries"
-                    autoFocus
                   />
                 </div>
                 <div style={s.mField}>
@@ -485,12 +497,12 @@ export default function Dashboard() {
                 <div style={s.mField}>
                   <label style={s.mLabel}>new balance (₹)</label>
                   <input
+                    ref={firstInputRef}
                     style={s.mInput}
                     type="number"
                     step="0.01"
                     value={balanceInput}
                     onChange={(e) => setBalanceInput(e.target.value)}
-                    autoFocus
                   />
                 </div>
                 {err && <p style={s.mErr}>// {err}</p>}
@@ -516,13 +528,13 @@ export default function Dashboard() {
                 <div style={s.mField}>
                   <label style={s.mLabel}>name *</label>
                   <input
+                    ref={firstInputRef}
                     style={s.mInput}
                     value={profileForm.name}
                     onChange={(e) =>
                       setProfileForm((f) => ({ ...f, name: e.target.value }))
                     }
                     placeholder="e.g. personal"
-                    autoFocus
                   />
                 </div>
                 <div style={s.mField}>
