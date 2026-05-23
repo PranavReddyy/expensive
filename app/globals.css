@@ -24,6 +24,11 @@ html, body {
   font-size: 13px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  /* Prevent double-tap / gesture zoom on supporting browsers */
+  touch-action: manipulation;
+  -ms-touch-action: manipulation;
+  /* Prevent automatic text size adjustment */
+  -webkit-text-size-adjust: 100%;
 }
 
 * { font-family: var(--font); }
@@ -36,6 +41,16 @@ input, textarea, select {
   appearance: none;
   background: var(--bg);
   color: var(--text);
+}
+
+/*
+  iOS Safari will automatically zoom inputs on focus if the computed
+  font-size is less than 16px. Setting form controls to 16px prevents
+  that zoom while leaving the rest of the layout at your chosen base size.
+*/
+input, textarea, select, button {
+  font-size: 16px; /* prevents iOS focus zoom */
+  -webkit-text-size-adjust: 100%;
 }
 
 a { color: inherit; text-decoration: none; }

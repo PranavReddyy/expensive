@@ -1,7 +1,7 @@
 {
-  "name": "expensive",
-  "short_name": "expenses",
-  "description": "personal expense tracker app",
+  "name": "Expense Tracker",
+  "short_name": "Expenses",
+  "description": "Personal expense tracker app",
   "icons": [
     {
       "src": "/web-app-manifest-192x192.png",
@@ -14,6 +14,24 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
+    },
+    {
+      "src": "/apple-touch-icon-180x180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon-152x152.png",
+      "sizes": "152x152",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon-120x120.png",
+      "sizes": "120x120",
+      "type": "image/png",
+      "purpose": "any"
     }
   ],
   "theme_color": "#1f2937",
