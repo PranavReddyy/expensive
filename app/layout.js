@@ -1,21 +1,20 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "expensive",
-  description: "personal expense tracker app",
+  title: "Expense Tracker",
+  description: "Personal expense tracker app",
   manifest: "/site.webmanifest",
   icons: {
     icon: "/favicon.ico",
-    apple: "/apple-touch-icon.png",
+    apple: {
+      url: "/apple-touch-icon.png",
+      sizes: "180x180",
+    },
     other: {
       rel: "icon",
       url: "/favicon.svg",
+      type: "image/svg+xml",
     },
-  },
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "black-translucent",
-    title: "Expense Tracker",
   },
 };
 
@@ -35,6 +34,11 @@ export default function RootLayout({ children }) {
           content="black-translucent"
         />
         <meta name="apple-mobile-web-app-title" content="Expenses" />
+        <link
+          rel="apple-touch-icon"
+          href="/apple-touch-icon.png"
+          sizes="180x180"
+        />
       </head>
       <body>{children}</body>
     </html>
