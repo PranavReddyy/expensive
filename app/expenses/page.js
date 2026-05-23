@@ -13,12 +13,10 @@ const fmt = (n) =>
 function getRange(filter) {
   const now = new Date();
   const start = new Date();
-
   if (filter === "day") {
     start.setHours(0, 0, 0, 0);
   } else if (filter === "week") {
-    const day = now.getDay();
-    start.setDate(now.getDate() - day);
+    start.setDate(now.getDate() - now.getDay());
     start.setHours(0, 0, 0, 0);
   } else if (filter === "month") {
     start.setDate(1);
@@ -27,7 +25,6 @@ function getRange(filter) {
     start.setMonth(0, 1);
     start.setHours(0, 0, 0, 0);
   }
-
   return filter === "all" ? null : start.toISOString();
 }
 
@@ -35,10 +32,11 @@ export default function ExpensesPage() {
   const [profiles, setProfiles] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [expenses, setExpenses] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [filter, setFilter] = useState("month");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [loading, setLoading] = useState(true);
 
-  // Transfer modal
   const [transferExpense, setTransferExpense] = useState(null);
   const [transferTargetId, setTransferTargetId] = useState("");
   const [transferring, setTransferring] = useState(false);
@@ -46,7 +44,26 @@ export default function ExpensesPage() {
 
   const active = profiles.find((p) => p.id === activeId);
   const otherProfiles = profiles.filter((p) => p.id !== activeId);
-  const totalFiltered = expenses.reduce((s, e) => s + parseFloat(e.amount), 0);
+
+  const visibleExpenses =
+    categoryFilter === "all"
+      ? expenses
+      : expenses.filter((e) => e.category_id === categoryFilter);
+
+  const totalFiltered = visibleExpenses.reduce(
+    (s, e) => s + parseFloat(e.amount),
+    0,
+  );
+
+  // ─── Data loading ────────────────────────────────────────────
+
+  const loadCategories = useCallback(async () => {
+    const { data } = await supabase
+      .from("categories")
+      .select("*")
+      .order("sort_order", { ascending: true });
+    setCategories(data || []);
+  }, []);
 
   const loadProfiles = useCallback(async () => {
     const { data } = await supabase
@@ -55,7 +72,6 @@ export default function ExpensesPage() {
       .order("created_at", { ascending: true });
     if (!data) return;
     setProfiles(data);
-
     const saved =
       typeof window !== "undefined"
         ? localStorage.getItem("activeProfileId")
@@ -66,25 +82,24 @@ export default function ExpensesPage() {
     setLoading(false);
   }, []);
 
+  // No icon column — select only id and name from categories
   const loadExpenses = useCallback(async (profileId, f) => {
     if (!profileId) return;
     const from = getRange(f);
-
     let q = supabase
       .from("expenses")
-      .select("*")
+      .select("*, categories(id, name)")
       .eq("profile_id", profileId)
       .order("created_at", { ascending: false });
-
     if (from) q = q.gte("created_at", from);
-
     const { data } = await q;
     setExpenses(data || []);
   }, []);
 
   useEffect(() => {
+    loadCategories();
     loadProfiles();
-  }, [loadProfiles]);
+  }, [loadCategories, loadProfiles]);
 
   useEffect(() => {
     if (activeId) loadExpenses(activeId, filter);
@@ -125,6 +140,20 @@ export default function ExpensesPage() {
     };
   }, [loadProfiles]);
 
+  useEffect(() => {
+    const ch = supabase
+      .channel("exp-categories-rt")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "categories" },
+        loadCategories,
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [loadCategories]);
+
   function switchProfile(id) {
     setActiveId(id);
     if (typeof window !== "undefined")
@@ -146,7 +175,6 @@ export default function ExpensesPage() {
       return;
     }
 
-    // 1. Update expense profile_id
     const { error: e1 } = await supabase
       .from("expenses")
       .update({ profile_id: transferTargetId })
@@ -157,7 +185,6 @@ export default function ExpensesPage() {
       return;
     }
 
-    // 2. Return money to source profile
     const { error: e2 } = await supabase
       .from("profiles")
       .update({
@@ -170,7 +197,6 @@ export default function ExpensesPage() {
       return;
     }
 
-    // 3. Deduct from target profile
     const { error: e3 } = await supabase
       .from("profiles")
       .update({
@@ -192,20 +218,16 @@ export default function ExpensesPage() {
 
   async function deleteExpense(exp) {
     if (!confirm(`delete "${exp.reason}"?`)) return;
-
-    // Restore balance
     await supabase
       .from("profiles")
       .update({ balance: (active?.balance || 0) + parseFloat(exp.amount) })
       .eq("id", activeId);
-
     await supabase.from("expenses").delete().eq("id", exp.id);
-
     loadProfiles();
     loadExpenses(activeId, filter);
   }
 
-  const filters = ["day", "week", "month", "year", "all"];
+  const timeFilters = ["day", "week", "month", "year", "all"];
 
   if (loading) {
     return (
@@ -215,10 +237,14 @@ export default function ExpensesPage() {
     );
   }
 
+  // Categories that actually appear in the current expense list
+  const activeCategories = categories.filter((c) =>
+    expenses.some((e) => e.category_id === c.id),
+  );
+
   return (
     <div style={s.page}>
       <div style={s.wrap}>
-        {/* Header */}
         <div style={s.header}>
           <span style={s.logo}>EXPENSES</span>
         </div>
@@ -238,9 +264,9 @@ export default function ExpensesPage() {
           </div>
         )}
 
-        {/* Filter bar */}
+        {/* Time filter bar */}
         <div style={s.filterBar}>
-          {filters.map((f) => (
+          {timeFilters.map((f) => (
             <button
               key={f}
               style={{
@@ -254,32 +280,75 @@ export default function ExpensesPage() {
           ))}
         </div>
 
+        {/* Category filter — only shown when categories exist in this period */}
+        {activeCategories.length > 0 && (
+          <div style={s.catFilterRow}>
+            <button
+              style={{
+                ...s.catFilterBtn,
+                ...(categoryFilter === "all" ? s.catFilterActive : {}),
+              }}
+              onClick={() => setCategoryFilter("all")}
+            >
+              all
+            </button>
+            {activeCategories.map((c) => (
+              <button
+                key={c.id}
+                style={{
+                  ...s.catFilterBtn,
+                  ...(categoryFilter === c.id ? s.catFilterActive : {}),
+                }}
+                onClick={() => setCategoryFilter(c.id)}
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Summary */}
-        {expenses.length > 0 && (
+        {visibleExpenses.length > 0 && (
           <div style={s.summary}>
             <span style={s.summaryLabel}>
-              {expenses.length} expense{expenses.length !== 1 ? "s" : ""}
+              {visibleExpenses.length} expense
+              {visibleExpenses.length !== 1 ? "s" : ""}
+              {categoryFilter !== "all" &&
+                ` · ${categories.find((c) => c.id === categoryFilter)?.name}`}
             </span>
             <span style={s.summaryTotal}>{fmt(totalFiltered)}</span>
           </div>
         )}
 
         {/* Expense list */}
-        {expenses.length > 0 ? (
+        {visibleExpenses.length > 0 ? (
           <div style={s.list}>
-            {expenses.map((e, i) => (
+            {visibleExpenses.map((e, i) => (
               <div
                 key={e.id}
                 style={{
                   ...s.row,
-                  ...(i === expenses.length - 1
+                  ...(i === visibleExpenses.length - 1
                     ? { borderBottom: "none" }
                     : {}),
                 }}
               >
                 <div style={s.rowMain}>
                   <div style={s.rowLeft}>
-                    <p style={s.reason}>{e.reason}</p>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        flexWrap: "wrap",
+                        marginBottom: "2px",
+                      }}
+                    >
+                      <p style={s.reason}>{e.reason}</p>
+                      {e.categories && (
+                        <span style={s.catTag}>{e.categories.name}</span>
+                      )}
+                    </div>
                     {e.notes && <p style={s.notes}>{e.notes}</p>}
                     <p style={s.date}>
                       {new Date(e.created_at).toLocaleString("en-IN", {
@@ -409,6 +478,7 @@ const s = {
     border: "1px solid var(--border-light)",
     background: "transparent",
     color: "var(--muted)",
+    cursor: "pointer",
   },
   tabActive: {
     border: "1px solid #000",
@@ -417,15 +487,37 @@ const s = {
     fontWeight: 600,
   },
 
-  filterBar: { display: "flex", gap: "4px", marginBottom: "16px" },
+  filterBar: { display: "flex", gap: "4px", marginBottom: "10px" },
   filterBtn: {
     padding: "5px 10px",
     border: "1px solid var(--border-light)",
     background: "transparent",
     fontSize: "11px",
     color: "var(--muted)",
+    cursor: "pointer",
   },
   filterActive: {
+    border: "1px solid #000",
+    color: "#000",
+    background: "var(--subtle)",
+    fontWeight: 600,
+  },
+
+  catFilterRow: {
+    display: "flex",
+    gap: "4px",
+    flexWrap: "wrap",
+    marginBottom: "14px",
+  },
+  catFilterBtn: {
+    padding: "4px 9px",
+    border: "1px solid var(--border-light)",
+    background: "transparent",
+    fontSize: "10px",
+    color: "var(--muted)",
+    cursor: "pointer",
+  },
+  catFilterActive: {
     border: "1px solid #000",
     color: "#000",
     background: "var(--subtle)",
@@ -452,7 +544,14 @@ const s = {
     marginBottom: "8px",
   },
   rowLeft: { flex: 1, minWidth: 0, paddingRight: "12px" },
-  reason: { fontSize: "13px", fontWeight: 500, marginBottom: "2px" },
+  reason: { fontSize: "13px", fontWeight: 500 },
+  catTag: {
+    fontSize: "9px",
+    padding: "2px 6px",
+    border: "1px solid var(--border-light)",
+    color: "var(--muted)",
+    whiteSpace: "nowrap",
+  },
   notes: { fontSize: "11px", color: "var(--muted)", marginBottom: "2px" },
   date: { fontSize: "10px", color: "var(--muted)" },
   amount: { fontSize: "14px", fontWeight: 600, whiteSpace: "nowrap" },
@@ -464,6 +563,7 @@ const s = {
     background: "transparent",
     color: "var(--text)",
     letterSpacing: "0.02em",
+    cursor: "pointer",
   },
 
   empty: {
@@ -473,7 +573,6 @@ const s = {
     padding: "40px 0",
   },
 
-  // Modal
   overlay: {
     position: "fixed",
     inset: 0,
@@ -508,6 +607,7 @@ const s = {
     fontSize: "13px",
     width: "100%",
     textAlign: "left",
+    cursor: "pointer",
   },
   profileOptionActive: {
     border: "1px solid #000",
@@ -529,6 +629,7 @@ const s = {
     background: "transparent",
     fontSize: "13px",
     color: "var(--muted)",
+    cursor: "pointer",
   },
   mConfirm: {
     flex: 2,
@@ -537,5 +638,6 @@ const s = {
     background: "#000",
     color: "#fff",
     fontSize: "13px",
+    cursor: "pointer",
   },
 };

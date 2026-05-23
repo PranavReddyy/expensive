@@ -61,11 +61,11 @@ a { color: inherit; text-decoration: none; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #ccc; }
 
-/* Disable double-tap zoom */
+/* Disable double-tap zoom
 button, a, div, span {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-}
+} */
 
 .no-zoom {
   touch-action: manipulation !important;

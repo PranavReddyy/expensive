@@ -15,13 +15,17 @@ export default function Dashboard() {
   const [activeId, setActiveId] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [totalSpent, setTotalSpent] = useState(0);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // modals
   const [modal, setModal] = useState(null); // 'add' | 'balance' | 'profile'
 
-  // forms
-  const [form, setForm] = useState({ reason: "", amount: "", notes: "" });
+  const [form, setForm] = useState({
+    reason: "",
+    amount: "",
+    notes: "",
+    category_id: "",
+  });
   const [balanceInput, setBalanceInput] = useState("");
   const [profileForm, setProfileForm] = useState({ name: "", balance: "" });
   const [submitting, setSubmitting] = useState(false);
@@ -29,7 +33,15 @@ export default function Dashboard() {
 
   const active = profiles.find((p) => p.id === activeId);
 
-  // ─── Data loading ───────────────────────────────────────────────────────────
+  // ─── Data loading ────────────────────────────────────────────
+
+  const loadCategories = useCallback(async () => {
+    const { data } = await supabase
+      .from("categories")
+      .select("*")
+      .order("sort_order", { ascending: true });
+    setCategories(data || []);
+  }, []);
 
   const loadProfiles = useCallback(async () => {
     const { data } = await supabase
@@ -54,11 +66,12 @@ export default function Dashboard() {
     setLoading(false);
   }, []);
 
+  // No icon column in schema — select only id and name
   const loadExpenses = useCallback(async (profileId) => {
     if (!profileId) return;
     const { data } = await supabase
       .from("expenses")
-      .select("*")
+      .select("*, categories(id, name)")
       .eq("profile_id", profileId)
       .order("created_at", { ascending: false })
       .limit(6);
@@ -76,8 +89,9 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    loadCategories();
     loadProfiles();
-  }, [loadProfiles]);
+  }, [loadCategories, loadProfiles]);
 
   useEffect(() => {
     if (activeId) {
@@ -86,7 +100,7 @@ export default function Dashboard() {
     }
   }, [activeId, loadExpenses, loadTotalSpent]);
 
-  // ─── Realtime subscriptions ─────────────────────────────────────────────────
+  // ─── Realtime ────────────────────────────────────────────────
 
   useEffect(() => {
     const ch = supabase
@@ -125,7 +139,21 @@ export default function Dashboard() {
     };
   }, [activeId, loadExpenses, loadTotalSpent]);
 
-  // ─── Actions ─────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const ch = supabase
+      .channel("rt-categories")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "categories" },
+        loadCategories,
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(ch);
+    };
+  }, [loadCategories]);
+
+  // ─── Actions ─────────────────────────────────────────────────
 
   function switchProfile(id) {
     setActiveId(id);
@@ -151,6 +179,7 @@ export default function Dashboard() {
       reason: form.reason.trim(),
       amount,
       notes: form.notes.trim() || null,
+      category_id: form.category_id || null,
     });
     if (e1) {
       setErr(e1.message);
@@ -168,7 +197,7 @@ export default function Dashboard() {
       return;
     }
 
-    setForm({ reason: "", amount: "", notes: "" });
+    setForm({ reason: "", amount: "", notes: "", category_id: "" });
     setModal(null);
     setSubmitting(false);
     loadProfiles();
@@ -184,12 +213,10 @@ export default function Dashboard() {
       return;
     }
     setSubmitting(true);
-
     const { error } = await supabase
       .from("profiles")
       .update({ balance: bal })
       .eq("id", activeId);
-
     if (error) {
       setErr(error.message);
       setSubmitting(false);
@@ -208,14 +235,12 @@ export default function Dashboard() {
       return;
     }
     setSubmitting(true);
-
     const bal = parseFloat(profileForm.balance) || 0;
     const { data, error } = await supabase
       .from("profiles")
       .insert({ name: profileForm.name.trim(), balance: bal })
       .select()
       .single();
-
     if (error) {
       setErr(error.message);
       setSubmitting(false);
@@ -231,10 +256,12 @@ export default function Dashboard() {
   function openModal(type) {
     setErr("");
     if (type === "balance" && active) setBalanceInput(String(active.balance));
+    if (type === "add")
+      setForm({ reason: "", amount: "", notes: "", category_id: "" });
     setModal(type);
   }
 
-  // ─── Render ──────────────────────────────────────────────────────────────────
+  // ─── Render ──────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -298,9 +325,7 @@ export default function Dashboard() {
                 edit
               </button>
             </div>
-
             <div style={s.divider} />
-
             <div style={s.statsRow}>
               <div>
                 <p style={s.cardLabel}>total logged</p>
@@ -314,7 +339,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Add expense button */}
         {active && (
           <button style={s.addBtn} onClick={() => openModal("add")}>
             + log expense
@@ -329,7 +353,19 @@ export default function Dashboard() {
               {expenses.map((e) => (
                 <div key={e.id} style={s.expRow}>
                   <div style={s.expLeft}>
-                    <p style={s.expReason}>{e.reason}</p>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        marginBottom: "2px",
+                      }}
+                    >
+                      <p style={s.expReason}>{e.reason}</p>
+                      {e.categories && (
+                        <span style={s.catTag}>{e.categories.name}</span>
+                      )}
+                    </div>
                     {e.notes && <p style={s.expNotes}>{e.notes}</p>}
                     <p style={s.expDate}>
                       {new Date(e.created_at).toLocaleString("en-IN", {
@@ -386,10 +422,39 @@ export default function Dashboard() {
                     placeholder="0.00"
                   />
                 </div>
+
+                {/* Category picker — name only, no icon */}
+                {categories.length > 0 && (
+                  <div style={s.mField}>
+                    <label style={s.mLabel}>category</label>
+                    <div style={s.catGrid}>
+                      {categories.map((c) => (
+                        <button
+                          key={c.id}
+                          style={{
+                            ...s.catBtn,
+                            ...(form.category_id === c.id
+                              ? s.catBtnActive
+                              : {}),
+                          }}
+                          onClick={() =>
+                            setForm((f) => ({
+                              ...f,
+                              category_id: f.category_id === c.id ? "" : c.id,
+                            }))
+                          }
+                        >
+                          <span style={{ fontSize: "11px" }}>{c.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div style={s.mField}>
                   <label style={s.mLabel}>notes</label>
                   <textarea
-                    style={{ ...s.mInput, height: "72px", resize: "none" }}
+                    style={{ ...s.mInput, height: "60px", resize: "none" }}
                     value={form.notes}
                     onChange={(e) =>
                       setForm((f) => ({ ...f, notes: e.target.value }))
@@ -525,20 +590,17 @@ const s = {
     border: "1px solid #000",
     padding: "4px 10px",
     color: "#000",
+    cursor: "pointer",
   },
 
-  tabs: {
-    display: "flex",
-    gap: "6px",
-    flexWrap: "wrap",
-    marginBottom: "20px",
-  },
+  tabs: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "20px" },
   tab: {
     fontSize: "11px",
     padding: "5px 12px",
     border: "1px solid var(--border-light)",
     background: "transparent",
     color: "var(--muted)",
+    cursor: "pointer",
   },
   tabActive: {
     border: "1px solid #000",
@@ -547,11 +609,7 @@ const s = {
     fontWeight: 600,
   },
 
-  card: {
-    border: "1px solid #000",
-    padding: "16px",
-    marginBottom: "16px",
-  },
+  card: { border: "1px solid #000", padding: "16px", marginBottom: "16px" },
   cardRow: {
     display: "flex",
     justifyContent: "space-between",
@@ -575,6 +633,7 @@ const s = {
     border: "1px solid var(--border-light)",
     padding: "4px 10px",
     color: "var(--muted)",
+    cursor: "pointer",
     marginTop: "4px",
   },
   divider: { borderTop: "1px solid var(--border-light)", margin: "14px 0" },
@@ -591,6 +650,7 @@ const s = {
     textAlign: "left",
     letterSpacing: "0.02em",
     marginBottom: "24px",
+    cursor: "pointer",
   },
 
   section: { marginBottom: "24px" },
@@ -609,7 +669,15 @@ const s = {
     borderBottom: "1px solid var(--border-light)",
   },
   expLeft: { flex: 1, minWidth: 0, paddingRight: "12px" },
-  expReason: { fontSize: "13px", fontWeight: 500, marginBottom: "2px" },
+  expReason: { fontSize: "13px", fontWeight: 500 },
+  catTag: {
+    fontSize: "9px",
+    padding: "2px 6px",
+    border: "1px solid var(--border-light)",
+    color: "var(--muted)",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+  },
   expNotes: {
     fontSize: "11px",
     color: "var(--muted)",
@@ -618,7 +686,7 @@ const s = {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  expDate: { fontSize: "10px", color: "var(--muted)" },
+  expDate: { fontSize: "10px", color: "var(--muted)", marginTop: "2px" },
   expAmount: { fontSize: "13px", fontWeight: 500, whiteSpace: "nowrap" },
 
   noData: {
@@ -641,9 +709,9 @@ const s = {
     color: "#fff",
     border: "none",
     fontSize: "13px",
+    cursor: "pointer",
   },
 
-  // Modal
   overlay: {
     position: "fixed",
     inset: 0,
@@ -679,6 +747,7 @@ const s = {
     fontSize: "13px",
     width: "100%",
     outline: "none",
+    boxSizing: "border-box",
   },
   mErr: {
     fontSize: "11px",
@@ -695,6 +764,7 @@ const s = {
     background: "transparent",
     fontSize: "13px",
     color: "var(--muted)",
+    cursor: "pointer",
   },
   mConfirm: {
     flex: 1,
@@ -703,5 +773,26 @@ const s = {
     background: "#000",
     color: "#fff",
     fontSize: "13px",
+    cursor: "pointer",
+  },
+
+  catGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3, 1fr)",
+    gap: "6px",
+  },
+  catBtn: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "9px 6px",
+    border: "1px solid var(--border-light)",
+    background: "transparent",
+    cursor: "pointer",
+  },
+  catBtnActive: {
+    border: "1px solid #000",
+    background: "var(--subtle)",
+    fontWeight: 600,
   },
 };
