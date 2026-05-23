@@ -15,10 +15,10 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <head>
-        {/* Prevent zoom everywhere — user-scalable=no is the key */}
+        {/* Prevent zoom everywhere — user-scalable=no plus min/max scale */}
         <meta
           name="viewport"
-          content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+          content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
         />
 
         {/* Standard favicon — put favicon.ico in /public */}
@@ -39,8 +39,9 @@ export default function RootLayout({ children }) {
 
         {/* Disable tap highlight on iOS */}
         <meta name="format-detection" content="telephone=no" />
+        <script src="/disable-zoom.js"></script>
       </head>
-      <body>{children}</body>
+      <body className="bg-white no-zoom">{children}</body>
     </html>
   );
 }

@@ -8,17 +8,38 @@
 (function () {
   "use strict";
 
-  // Prevent keyboard zoom shortcuts (Ctrl/Cmd + +/-/0)
+  function blockEvent(e) {
+    try {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    } catch (err) {}
+    return false;
+  }
+
+  // Prevent keyboard zoom shortcuts (Ctrl/Cmd + +/-/0 and numpad)
   window.addEventListener(
     "keydown",
     function (e) {
       try {
         if (e.ctrlKey || e.metaKey) {
-          const key = e.key;
-          if (key === "+" || key === "-" || key === "=" || key === "0") {
-            e.preventDefault();
-            return false;
-          }
+          const key = (e.key || "").toString();
+          const code = (e.code || "").toString();
+          const keyCode = e.keyCode || e.which || 0;
+
+          var isZoomKey = false;
+          if (key === "+" || key === "-" || key === "=" || key === "0")
+            isZoomKey = true;
+          if (
+            code === "Equal" ||
+            code === "Minus" ||
+            code === "NumpadAdd" ||
+            code === "NumpadSubtract"
+          )
+            isZoomKey = true;
+          if ([187, 189, 107, 109, 48].indexOf(keyCode) !== -1)
+            isZoomKey = true;
+
+          if (isZoomKey) return blockEvent(e);
         }
       } catch (err) {
         // ignore
@@ -31,22 +52,15 @@
   window.addEventListener(
     "wheel",
     function (e) {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        return false;
-      }
+      if (e.ctrlKey || e.metaKey) return blockEvent(e);
     },
     { passive: false },
   );
 
   // Prevent Safari iOS gesture events
-  function stopGesture(e) {
-    e.preventDefault();
-    return false;
-  }
-  window.addEventListener("gesturestart", stopGesture, { passive: false });
-  window.addEventListener("gesturechange", stopGesture, { passive: false });
-  window.addEventListener("gestureend", stopGesture, { passive: false });
+  window.addEventListener("gesturestart", blockEvent, { passive: false });
+  window.addEventListener("gesturechange", blockEvent, { passive: false });
+  window.addEventListener("gestureend", blockEvent, { passive: false });
 
   // Prevent double-tap to zoom
   var lastTouchEnd = 0;
@@ -54,25 +68,36 @@
     "touchend",
     function (e) {
       var now = Date.now();
-      if (now - lastTouchEnd <= 300) {
-        e.preventDefault();
-      }
+      if (now - lastTouchEnd <= 300) return blockEvent(e);
       lastTouchEnd = now;
     },
     { passive: false },
   );
 
-  // Prevent multi-touch/pinch by tracking pointer count
+  // Prevent multi-touch/pinch via touchstart/touchmove
+  window.addEventListener(
+    "touchstart",
+    function (e) {
+      if (e.touches && e.touches.length > 1) return blockEvent(e);
+    },
+    { passive: false },
+  );
+  window.addEventListener(
+    "touchmove",
+    function (e) {
+      if (e.touches && e.touches.length > 1) return blockEvent(e);
+    },
+    { passive: false },
+  );
+
+  // Prevent multi-touch/pinch by tracking pointer count as a fallback
   var pointerCount = 0;
   window.addEventListener(
     "pointerdown",
     function (e) {
       if (e.pointerType === "touch") {
         pointerCount++;
-        if (pointerCount > 1) {
-          e.preventDefault();
-          return false;
-        }
+        if (pointerCount > 1) return blockEvent(e);
       }
     },
     { passive: false },
@@ -80,9 +105,8 @@
   window.addEventListener(
     "pointerup",
     function (e) {
-      if (e.pointerType === "touch") {
+      if (e.pointerType === "touch")
         pointerCount = Math.max(0, pointerCount - 1);
-      }
     },
     { passive: false },
   );
