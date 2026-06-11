@@ -10,6 +10,13 @@ const fmt = (n) =>
     maximumFractionDigits: 2,
   });
 
+function getNowLocal() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16); // → "2025-06-11T14:30"
+}
+
 export default function Dashboard() {
   const [profiles, setProfiles] = useState([]);
   const [activeId, setActiveId] = useState(null);
@@ -25,6 +32,7 @@ export default function Dashboard() {
     amount: "",
     notes: "",
     category_id: "",
+    datetime: getNowLocal(),
   });
   const [balanceInput, setBalanceInput] = useState("");
   const [profileForm, setProfileForm] = useState({ name: "", balance: "" });
@@ -192,6 +200,7 @@ export default function Dashboard() {
       amount,
       notes: form.notes.trim() || null,
       category_id: form.category_id || null,
+      created_at: new Date(form.datetime).toISOString(),
     });
     if (e1) {
       setErr(e1.message);
@@ -209,7 +218,13 @@ export default function Dashboard() {
       return;
     }
 
-    setForm({ reason: "", amount: "", notes: "", category_id: "" });
+    setForm({
+      reason: "",
+      amount: "",
+      notes: "",
+      category_id: "",
+      datetime: getNowLocal(),
+    });
     setModal(null);
     setSubmitting(false);
     loadProfiles();
@@ -269,7 +284,13 @@ export default function Dashboard() {
     setErr("");
     if (type === "balance" && active) setBalanceInput(String(active.balance));
     if (type === "add")
-      setForm({ reason: "", amount: "", notes: "", category_id: "" });
+      setForm({
+        reason: "",
+        amount: "",
+        notes: "",
+        category_id: "",
+        datetime: getNowLocal(),
+      });
     setModal(type);
   }
 
@@ -432,6 +453,18 @@ export default function Dashboard() {
                       setForm((f) => ({ ...f, amount: e.target.value }))
                     }
                     placeholder="0.00"
+                  />
+                </div>
+
+                <div style={s.mField}>
+                  <label style={s.mLabel}>date & time</label>
+                  <input
+                    style={s.mInput}
+                    type="datetime-local"
+                    value={form.datetime}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, datetime: e.target.value }))
+                    }
                   />
                 </div>
 
