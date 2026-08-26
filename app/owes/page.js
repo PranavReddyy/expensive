@@ -33,6 +33,7 @@ export default function OwesPage() {
     people: [],
     includesYou: true,
   });
+  const [splitPersonQuery, setSplitPersonQuery] = useState("");
   const [selectedDebt, setSelectedDebt] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -159,6 +160,7 @@ export default function OwesPage() {
         people: [],
         includesYou: true,
       });
+      setSplitPersonQuery("");
     }
     if (type === "payment" && debt) {
       setSelectedDebt(debt);
@@ -308,8 +310,8 @@ export default function OwesPage() {
       <div style={s.wrap}>
         <div style={s.header}>
           <div>
-            <p style={s.logo}>OWES</p>
-            <p style={s.subhead}>tracked separately from your balance</p>
+            <p style={s.logo}>SETTLEMENTS</p>
+            <p style={s.subhead}>separate from your account balance</p>
           </div>
           <button style={s.smallBtn} onClick={() => openModal("person")}>
             + person
@@ -336,16 +338,25 @@ export default function OwesPage() {
           <>
             <div style={s.summaryGrid}>
               <div style={s.summaryCard}>
-                <p style={s.label}>owed to you</p>
+                <p style={s.label}>TO COLLECT</p>
                 <p style={s.summaryValue}>{fmt(owedToYou)}</p>
               </div>
               <div style={s.summaryCard}>
-                <p style={s.label}>you owe</p>
+                <p style={s.label}>TO PAY</p>
                 <p style={s.summaryValue}>{fmt(youOwe)}</p>
               </div>
-              <div style={{ ...s.summaryCard, ...s.netCard }}>
-                <p style={s.label}>net</p>
-                <p style={s.summaryValue}>{fmt(owedToYou - youOwe)}</p>
+              <div style={s.netCard}>
+                <div>
+                  <p style={{ ...s.label, ...s.netLabel }}>NET POSITION</p>
+                  <p style={s.netHint}>
+                    {owedToYou === youOwe
+                      ? "all square"
+                      : owedToYou > youOwe
+                        ? "you are owed overall"
+                        : "you owe overall"}
+                  </p>
+                </div>
+                <p style={s.netValue}>{fmt(Math.abs(owedToYou - youOwe))}</p>
               </div>
             </div>
 
@@ -358,7 +369,7 @@ export default function OwesPage() {
                 onClick={() => openModal("split")}
                 disabled={people.length === 0}
               >
-                split a payment
+                split payment
               </button>
             </div>
             {people.length === 0 && (
@@ -367,31 +378,35 @@ export default function OwesPage() {
 
             {openDebts.length > 0 ? (
               <section style={s.section}>
-                <p style={s.sectionLabel}>open amounts</p>
-                <div style={s.list}>
-                  {openDebts.map((debt, index) => {
+                <div style={s.sectionHeader}>
+                  <p style={s.sectionLabel}>OPEN AMOUNTS</p>
+                  <span style={s.count}>{openDebts.length}</span>
+                </div>
+                <div style={s.debtCards}>
+                  {openDebts.map((debt) => {
                     const theyOwe = debt.direction === "they_owe_me";
+                    const paid = Number(debt.amount) - Number(debt.remaining_amount);
                     return (
-                      <div
-                        key={debt.id}
-                        style={{ ...s.debtRow, ...(index === openDebts.length - 1 ? s.lastRow : {}) }}
-                      >
-                        <div style={s.debtMain}>
-                          <div style={s.debtTopline}>
-                            <p style={s.personName}>{debt.people?.name || "unknown"}</p>
-                            <p style={s.amount}>{fmt(debt.remaining_amount)}</p>
-                          </div>
-                          <p style={s.description}>{debt.description}</p>
-                          <p style={s.direction}>
-                            {theyOwe ? "owes you" : "you owe"}
-                            {Number(debt.amount) !== Number(debt.remaining_amount) &&
-                              ` · ${fmt(debt.amount - debt.remaining_amount)} paid`}
-                          </p>
+                      <article key={debt.id} style={s.debtCard}>
+                        <div style={s.debtHeader}>
+                          <p style={s.personName}>{debt.people?.name || "unknown"}</p>
+                          <span style={{ ...s.directionTag, ...(theyOwe ? s.collectTag : s.payTag) }}>
+                            {theyOwe ? "TO COLLECT" : "TO PAY"}
+                          </span>
                         </div>
-                        <button style={s.settleBtn} onClick={() => openModal("payment", debt)}>
-                          payment
-                        </button>
-                      </div>
+                        <p style={s.debtAmount}>{fmt(debt.remaining_amount)}</p>
+                        <p style={s.description}>{debt.description}</p>
+                        <div style={s.debtFooter}>
+                          <p style={s.direction}>
+                            {paid > 0
+                              ? `${fmt(paid)} already paid`
+                              : `original amount ${fmt(debt.amount)}`}
+                          </p>
+                          <button style={s.settleBtn} onClick={() => openModal("payment", debt)}>
+                            record payment
+                          </button>
+                        </div>
+                      </article>
                     );
                   })}
                 </div>
@@ -402,21 +417,35 @@ export default function OwesPage() {
 
             {personBalances.length > 0 && (
               <section style={s.section}>
-                <p style={s.sectionLabel}>people</p>
-                <div style={s.list}>
-                  {personBalances.map(({ person, theyOwe, iOwe, net }, index) => (
-                    <div
-                      key={person.id}
-                      style={{ ...s.personRow, ...(index === personBalances.length - 1 ? s.lastRow : {}) }}
-                    >
-                      <p style={s.personName}>{person.name}</p>
-                      <div style={s.personAmounts}>
-                        {theyOwe > 0 && <span>they owe {fmt(theyOwe)}</span>}
-                        {iOwe > 0 && <span>you owe {fmt(iOwe)}</span>}
-                        {net === 0 && <span>settled</span>}
+                <div style={s.sectionHeader}>
+                  <p style={s.sectionLabel}>PEOPLE</p>
+                  <span style={s.count}>{personBalances.length}</span>
+                </div>
+                <div style={s.peopleList}>
+                  {personBalances.map(({ person, theyOwe, iOwe, net }, index) => {
+                    const personStatus =
+                      net > 0 ? `collect ${fmt(net)}` : net < 0 ? `pay ${fmt(Math.abs(net))}` : "settled";
+                    return (
+                      <div key={person.id} style={{ ...s.personRow, ...(index === personBalances.length - 1 ? s.lastRow : {}) }}>
+                        <span style={s.personInitial}>{person.name.slice(0, 1).toUpperCase()}</span>
+                        <div style={s.personMain}>
+                          <p style={s.personName}>{person.name}</p>
+                          <p style={s.personDetail}>
+                            {theyOwe > 0 && iOwe > 0
+                              ? `they owe ${fmt(theyOwe)} · you owe ${fmt(iOwe)}`
+                              : net === 0
+                                ? "no open amount"
+                                : net > 0
+                                  ? "they owe you"
+                                  : "you owe them"}
+                          </p>
+                        </div>
+                        <span style={{ ...s.personStatus, ...(net > 0 ? s.collectText : net < 0 ? s.payText : {}) }}>
+                          {personStatus}
+                        </span>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
             )}
@@ -449,14 +478,11 @@ export default function OwesPage() {
             {modal === "debt" && (
               <>
                 <p style={s.modalTitle}>add amount</p>
-                <select
-                  style={s.input}
+                <PersonSearch
+                  people={people}
                   value={debtForm.person_id}
-                  onChange={(event) => setDebtForm({ ...debtForm, person_id: event.target.value })}
-                >
-                  <option value="">select person</option>
-                  {people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-                </select>
+                  onChange={(personId) => setDebtForm({ ...debtForm, person_id: personId })}
+                />
                 <div style={s.directionPicker}>
                   <button
                     style={{ ...s.directionButton, ...(debtForm.direction === "they_owe_me" ? s.directionActive : {}) }}
@@ -484,8 +510,18 @@ export default function OwesPage() {
                   <span>include my own share in the split</span>
                 </label>
                 <p style={s.modalLabel}>people to split with</p>
+                <input
+                  style={s.input}
+                  placeholder="search people"
+                  value={splitPersonQuery}
+                  onChange={(event) => setSplitPersonQuery(event.target.value)}
+                />
                 <div style={s.peoplePicker}>
-                  {people.map((person) => {
+                  {people
+                    .filter((person) =>
+                      person.name.toLowerCase().includes(splitPersonQuery.trim().toLowerCase()),
+                    )
+                    .map((person) => {
                     const checked = splitForm.people.includes(person.id);
                     return (
                       <button
@@ -533,6 +569,58 @@ function ModalActions({ onCancel, onConfirm, busy, label }) {
   );
 }
 
+function PersonSearch({ people, value, onChange }) {
+  const [query, setQuery] = useState("");
+  const selected = people.find((person) => person.id === value);
+  const matches = people.filter((person) =>
+    person.name.toLowerCase().includes(query.trim().toLowerCase()),
+  );
+
+  return (
+    <div style={s.personSearch}>
+      <input
+        autoFocus
+        style={s.input}
+        placeholder="search people"
+        value={query}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          if (value) onChange("");
+        }}
+      />
+      {selected && (
+        <div style={s.selectedPerson}>
+          <span>{selected.name}</span>
+          <button type="button" style={s.clearPerson} onClick={() => { onChange(""); setQuery(""); }}>
+            change
+          </button>
+        </div>
+      )}
+      {!selected && query.trim() && (
+        <div style={s.searchResults}>
+          {matches.length > 0 ? (
+            matches.map((person) => (
+              <button
+                type="button"
+                key={person.id}
+                style={s.searchResult}
+                onClick={() => {
+                  onChange(person.id);
+                  setQuery(person.name);
+                }}
+              >
+                {person.name}
+              </button>
+            ))
+          ) : (
+            <p style={s.noResults}>no saved person found</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const s = {
   page: { minHeight: "100vh", paddingBottom: "calc(var(--nav-h) + 16px)", maxWidth: "480px", margin: "0 auto" },
   wrap: { padding: "20px 16px 8px" },
@@ -544,28 +632,42 @@ const s = {
   tabs: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "16px" },
   tab: { fontSize: "11px", padding: "5px 12px", border: "1px solid var(--border-light)", background: "transparent", color: "var(--muted)" },
   tabActive: { border: "1px solid #000", color: "#000", background: "var(--subtle)", fontWeight: 600 },
-  summaryGrid: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "6px", marginBottom: "10px" },
-  summaryCard: { border: "1px solid var(--border-light)", padding: "10px", minWidth: 0 },
-  netCard: { background: "var(--subtle)", borderColor: "#000" },
+  summaryGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "7px", marginBottom: "10px" },
+  summaryCard: { border: "1px solid var(--border-light)", padding: "12px", minWidth: 0 },
+  netCard: { gridColumn: "1 / -1", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#000", color: "#fff", padding: "12px" },
   label: { fontSize: "9px", color: "var(--muted)", letterSpacing: "0.04em", marginBottom: "3px" },
-  summaryValue: { fontSize: "12px", fontWeight: 600, whiteSpace: "nowrap" },
+  summaryValue: { fontSize: "16px", fontWeight: 600, whiteSpace: "nowrap", letterSpacing: "-0.04em" },
+  netHint: { fontSize: "10px", color: "#bdbdbd" },
+  netLabel: { color: "#bdbdbd" },
+  netValue: { fontSize: "18px", fontWeight: 600, letterSpacing: "-0.05em", whiteSpace: "nowrap" },
   actionRow: { display: "flex", gap: "7px", marginBottom: "8px" },
   primaryBtn: { flex: 1, border: "none", background: "#000", color: "#fff", padding: "10px 8px", fontSize: "11px" },
   secondaryBtn: { background: "transparent", color: "#000", border: "1px solid #000" },
   hint: { fontSize: "10px", color: "var(--muted)", marginBottom: "18px" },
-  section: { marginTop: "22px" },
-  sectionLabel: { fontSize: "10px", color: "var(--muted)", letterSpacing: "0.06em", marginBottom: "7px" },
-  list: { border: "1px solid var(--border-light)" },
-  debtRow: { display: "flex", alignItems: "center", gap: "10px", padding: "11px", borderBottom: "1px solid var(--border-light)" },
-  debtMain: { flex: 1, minWidth: 0 },
-  debtTopline: { display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "baseline" },
+  section: { marginTop: "24px" },
+  sectionHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" },
+  sectionLabel: { fontSize: "10px", color: "var(--muted)", letterSpacing: "0.08em" },
+  count: { minWidth: "20px", textAlign: "center", border: "1px solid var(--border-light)", color: "var(--muted)", fontSize: "10px", lineHeight: "18px" },
+  debtCards: { display: "flex", flexDirection: "column", gap: "8px" },
+  debtCard: { border: "1px solid var(--border-light)", padding: "12px", background: "#fff" },
+  debtHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "10px" },
   personName: { fontSize: "12px", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  amount: { fontSize: "12px", fontWeight: 600, whiteSpace: "nowrap" },
-  description: { fontSize: "11px", marginTop: "1px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  direction: { fontSize: "9px", color: "var(--muted)", marginTop: "2px" },
-  settleBtn: { fontSize: "10px", border: "1px solid var(--border-light)", background: "transparent", padding: "5px 7px", color: "var(--text)" },
-  personRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", padding: "10px 11px", borderBottom: "1px solid var(--border-light)" },
-  personAmounts: { textAlign: "right", color: "var(--muted)", fontSize: "10px", display: "flex", flexDirection: "column", gap: "1px" },
+  directionTag: { flexShrink: 0, border: "1px solid", padding: "2px 5px", fontSize: "8px", letterSpacing: "0.05em", fontWeight: 600 },
+  collectTag: { borderColor: "#000", color: "#000" },
+  payTag: { borderColor: "#aaa", color: "#777" },
+  debtAmount: { fontSize: "23px", lineHeight: 1.2, letterSpacing: "-0.06em", fontWeight: 600, marginTop: "10px" },
+  description: { fontSize: "11px", marginTop: "3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  debtFooter: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", marginTop: "12px", paddingTop: "9px", borderTop: "1px solid var(--border-light)" },
+  direction: { fontSize: "9px", color: "var(--muted)" },
+  settleBtn: { flexShrink: 0, fontSize: "10px", border: "1px solid #000", background: "#000", padding: "6px 8px", color: "#fff" },
+  peopleList: { border: "1px solid var(--border-light)" },
+  personRow: { display: "flex", alignItems: "center", gap: "9px", padding: "10px", borderBottom: "1px solid var(--border-light)" },
+  personInitial: { width: "24px", height: "24px", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", color: "#fff", fontSize: "10px", fontWeight: 600, flexShrink: 0 },
+  personMain: { flex: 1, minWidth: 0 },
+  personDetail: { fontSize: "9px", color: "var(--muted)", marginTop: "1px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  personStatus: { fontSize: "10px", color: "var(--muted)", whiteSpace: "nowrap", textAlign: "right" },
+  collectText: { color: "#000", fontWeight: 600 },
+  payText: { color: "#777" },
   lastRow: { borderBottom: "none" },
   empty: { color: "var(--muted)", fontSize: "12px", textAlign: "center", padding: "36px 0" },
   settledNote: { color: "var(--muted)", fontSize: "10px", marginTop: "16px", textAlign: "center" },
@@ -575,6 +677,12 @@ const s = {
   modalHint: { fontSize: "10px", color: "var(--muted)", marginBottom: "7px", lineHeight: 1.45 },
   modalLabel: { fontSize: "10px", color: "var(--muted)", margin: "11px 0 6px" },
   input: { width: "100%", border: "1px solid var(--border-light)", padding: "9px 10px", marginBottom: "8px", fontSize: "13px" },
+  personSearch: { marginBottom: "8px" },
+  selectedPerson: { display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid #000", padding: "8px 10px", fontSize: "11px", marginTop: "-2px" },
+  clearPerson: { border: "none", background: "transparent", color: "var(--muted)", fontSize: "10px", padding: "2px" },
+  searchResults: { border: "1px solid var(--border-light)", borderTop: "none", marginTop: "-8px", marginBottom: "8px" },
+  searchResult: { display: "block", width: "100%", textAlign: "left", border: "none", borderBottom: "1px solid var(--border-light)", background: "#fff", padding: "8px 10px", fontSize: "11px" },
+  noResults: { padding: "8px 10px", color: "var(--muted)", fontSize: "10px" },
   directionPicker: { display: "flex", gap: "5px", marginBottom: "8px" },
   directionButton: { flex: 1, border: "1px solid var(--border-light)", background: "transparent", fontSize: "10px", padding: "8px 4px", color: "var(--muted)" },
   directionActive: { borderColor: "#000", background: "var(--subtle)", color: "#000", fontWeight: 600 },
