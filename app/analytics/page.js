@@ -17,15 +17,84 @@ const fmtShort = (n) => {
   return "₹" + Math.round(n);
 };
 
-function buildChartData(expenses, filter) {
-  const now = new Date();
+function getPeriodRange(filter, periodDate = new Date()) {
+  const start = new Date(periodDate);
+  start.setHours(0, 0, 0, 0);
+
+  if (filter === "week") start.setDate(start.getDate() - start.getDay());
+  if (filter === "month") start.setDate(1);
+  if (filter === "year") start.setMonth(0, 1);
+
+  const end = new Date(start);
+  if (filter === "day") end.setDate(end.getDate() + 1);
+  if (filter === "week") end.setDate(end.getDate() + 7);
+  if (filter === "month") end.setMonth(end.getMonth() + 1);
+  if (filter === "year") end.setFullYear(end.getFullYear() + 1);
+
+  return { start, end };
+}
+
+function shiftPeriod(periodDate, filter, amount) {
+  const next = new Date(periodDate);
+  if (filter === "day") next.setDate(next.getDate() + amount);
+  if (filter === "week") next.setDate(next.getDate() + amount * 7);
+  if (filter === "month") {
+    next.setDate(1);
+    next.setMonth(next.getMonth() + amount);
+  }
+  if (filter === "year") {
+    next.setMonth(0, 1);
+    next.setFullYear(next.getFullYear() + amount);
+  }
+  return next;
+}
+
+function isCurrentPeriod(periodDate, filter) {
+  const selected = getPeriodRange(filter, periodDate).start;
+  const current = getPeriodRange(filter).start;
+  return selected.getTime() >= current.getTime();
+}
+
+function formatPeriod(periodDate, filter) {
+  const { start, end } = getPeriodRange(filter, periodDate);
+  if (filter === "day") {
+    return start.toLocaleDateString("en-IN", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  }
+  if (filter === "week") {
+    const lastDay = new Date(end);
+    lastDay.setDate(lastDay.getDate() - 1);
+    const startLabel = start.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+    });
+    const endLabel = lastDay.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+    return `${startLabel} – ${endLabel}`;
+  }
+  if (filter === "month") {
+    return start.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  }
+  return String(start.getFullYear());
+}
+
+function buildChartData(expenses, filter, periodDate) {
+  const now = periodDate;
   const buckets = {};
+  const { start, end } = getPeriodRange(filter, periodDate);
 
   if (filter === "day") {
     for (let h = 0; h < 24; h++) buckets[h] = 0;
     expenses.forEach((e) => {
       const d = new Date(e.created_at);
-      if (d.toDateString() === now.toDateString()) {
+      if (d >= start && d < end) {
         buckets[d.getHours()] =
           (buckets[d.getHours()] || 0) + parseFloat(e.amount);
       }
@@ -41,12 +110,9 @@ function buildChartData(expenses, filter) {
     days.forEach((d) => {
       buckets[d] = 0;
     });
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() - now.getDay());
-    weekStart.setHours(0, 0, 0, 0);
     expenses.forEach((e) => {
       const d = new Date(e.created_at);
-      if (d >= weekStart) {
+      if (d >= start && d < end) {
         const key = days[d.getDay()];
         buckets[key] = (buckets[key] || 0) + parseFloat(e.amount);
       }
@@ -108,8 +174,8 @@ function buildChartData(expenses, filter) {
   return [];
 }
 
-function buildCumulativeData(expenses, filter) {
-  const now = new Date();
+function buildCumulativeData(expenses, filter, periodDate) {
+  const now = periodDate;
 
   if (filter === "month") {
     const daysInMonth = new Date(
@@ -171,71 +237,24 @@ function buildCumulativeData(expenses, filter) {
   return [];
 }
 
-function getRange(filter) {
+function getDaysInfo(filter, periodDate) {
   const now = new Date();
-  const start = new Date();
-  if (filter === "day") {
-    start.setHours(0, 0, 0, 0);
-  } else if (filter === "week") {
-    start.setDate(now.getDate() - now.getDay());
-    start.setHours(0, 0, 0, 0);
-  } else if (filter === "month") {
-    start.setDate(1);
-    start.setHours(0, 0, 0, 0);
-  } else if (filter === "year") {
-    start.setMonth(0, 1);
-    start.setHours(0, 0, 0, 0);
-  }
-  return start.toISOString();
-}
-
-function getPrevRange(filter) {
-  const now = new Date();
-  const start = new Date();
-  const end = new Date();
-
-  if (filter === "day") {
-    start.setDate(now.getDate() - 1);
-    start.setHours(0, 0, 0, 0);
-    end.setDate(now.getDate() - 1);
-    end.setHours(23, 59, 59, 999);
-  } else if (filter === "week") {
-    start.setDate(now.getDate() - now.getDay() - 7);
-    start.setHours(0, 0, 0, 0);
-    end.setDate(now.getDate() - now.getDay() - 1);
-    end.setHours(23, 59, 59, 999);
-  } else if (filter === "month") {
-    start.setMonth(now.getMonth() - 1, 1);
-    start.setHours(0, 0, 0, 0);
-    end.setDate(0);
-    end.setHours(23, 59, 59, 999);
-  } else if (filter === "year") {
-    start.setFullYear(now.getFullYear() - 1, 0, 1);
-    start.setHours(0, 0, 0, 0);
-    end.setFullYear(now.getFullYear() - 1, 11, 31);
-    end.setHours(23, 59, 59, 999);
-  }
-
-  return { start: start.toISOString(), end: end.toISOString() };
-}
-
-function getDaysInfo(filter) {
-  const now = new Date();
+  const isCurrent = isCurrentPeriod(periodDate, filter);
   if (filter === "month") {
-    const total = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const elapsed = now.getDate();
+    const total = new Date(periodDate.getFullYear(), periodDate.getMonth() + 1, 0).getDate();
+    const elapsed = isCurrent ? now.getDate() : total;
     const remaining = total - elapsed;
     return { elapsed, remaining, total };
   }
   if (filter === "week") {
-    const elapsed = now.getDay() + 1;
+    const elapsed = isCurrent ? now.getDay() + 1 : 7;
     const remaining = 7 - elapsed;
     return { elapsed, remaining, total: 7 };
   }
   if (filter === "year") {
-    const start = new Date(now.getFullYear(), 0, 1);
-    const elapsed = Math.ceil((now - start) / 86400000);
-    const total = now.getFullYear() % 4 === 0 ? 366 : 365;
+    const start = new Date(periodDate.getFullYear(), 0, 1);
+    const total = new Date(periodDate.getFullYear(), 1, 29).getMonth() === 1 ? 366 : 365;
+    const elapsed = isCurrent ? Math.ceil((now - start) / 86400000) : total;
     return { elapsed, remaining: total - elapsed, total };
   }
   return null;
@@ -460,6 +479,7 @@ export default function AnalyticsPage() {
   const [activeId, setActiveId] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [filter, setFilter] = useState("month");
+  const [periodDate, setPeriodDate] = useState(() => new Date());
   const [loading, setLoading] = useState(true);
   const [chartMode, setChartMode] = useState("bar");
 
@@ -526,19 +546,23 @@ export default function AnalyticsPage() {
       localStorage.setItem("activeProfileId", id);
   }
 
-  const rangeStart = new Date(getRange(filter));
-  const filteredExpenses = expenses.filter(
-    (e) => new Date(e.created_at) >= rangeStart,
-  );
-
-  const { start: prevStart, end: prevEnd } = getPrevRange(filter);
-  const prevExpenses = expenses.filter((e) => {
+  const currentRange = getPeriodRange(filter, periodDate);
+  const filteredExpenses = expenses.filter((e) => {
     const d = new Date(e.created_at);
-    return d >= new Date(prevStart) && d <= new Date(prevEnd);
+    return d >= currentRange.start && d < currentRange.end;
   });
 
-  const chartData = buildChartData(expenses, filter);
-  const cumulData = buildCumulativeData(filteredExpenses, filter);
+  const previousRange = getPeriodRange(
+    filter,
+    shiftPeriod(periodDate, filter, -1),
+  );
+  const prevExpenses = expenses.filter((e) => {
+    const d = new Date(e.created_at);
+    return d >= previousRange.start && d < previousRange.end;
+  });
+
+  const chartData = buildChartData(expenses, filter, periodDate);
+  const cumulData = buildCumulativeData(filteredExpenses, filter, periodDate);
 
   const total = filteredExpenses.reduce((s, e) => s + parseFloat(e.amount), 0);
   const prevTotal = prevExpenses.reduce((s, e) => s + parseFloat(e.amount), 0);
@@ -548,7 +572,7 @@ export default function AnalyticsPage() {
       ? Math.max(...filteredExpenses.map((e) => parseFloat(e.amount)))
       : 0;
 
-  const daysInfo = getDaysInfo(filter);
+  const daysInfo = getDaysInfo(filter, periodDate);
   const burnRate =
     daysInfo && daysInfo.elapsed > 0 ? total / daysInfo.elapsed : 0;
   const projected = daysInfo ? burnRate * daysInfo.total : 0;
@@ -584,6 +608,16 @@ export default function AnalyticsPage() {
   const busiest = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0];
 
   const filters = ["day", "week", "month", "year"];
+  const historicalPeriod = !isCurrentPeriod(periodDate, filter);
+
+  function selectFilter(nextFilter) {
+    setFilter(nextFilter);
+    setPeriodDate(new Date());
+  }
+
+  function movePeriod(amount) {
+    setPeriodDate((current) => shiftPeriod(current, filter, amount));
+  }
 
   if (loading) {
     return (
@@ -622,11 +656,35 @@ export default function AnalyticsPage() {
                 ...s.filterBtn,
                 ...(filter === f ? s.filterActive : {}),
               }}
-              onClick={() => setFilter(f)}
+              onClick={() => selectFilter(f)}
             >
               {f}
             </button>
           ))}
+        </div>
+
+        <div style={s.periodNav} aria-label="Choose time period">
+          <button
+            type="button"
+            style={s.periodButton}
+            onClick={() => movePeriod(-1)}
+            aria-label={`Previous ${filter}`}
+          >
+            ←
+          </button>
+          <p style={s.periodLabel}>{formatPeriod(periodDate, filter)}</p>
+          <button
+            type="button"
+            style={{
+              ...s.periodButton,
+              ...(isCurrentPeriod(periodDate, filter) ? s.periodButtonDisabled : {}),
+            }}
+            onClick={() => movePeriod(1)}
+            disabled={isCurrentPeriod(periodDate, filter)}
+            aria-label={`Next ${filter}`}
+          >
+            →
+          </button>
         </div>
 
         {/* Primary stats */}
@@ -671,21 +729,21 @@ export default function AnalyticsPage() {
         {daysInfo && filteredExpenses.length > 0 && (
           <div style={s.insightRow}>
             <div style={s.insightBox}>
-              <p style={s.statLabel}>daily burn</p>
+              <p style={s.statLabel}>{historicalPeriod ? "daily average" : "daily burn"}</p>
               <p style={{ fontSize: "13px", fontWeight: 600 }}>
                 {fmtShort(burnRate)}/day
               </p>
             </div>
             <div style={s.insightBox}>
-              <p style={s.statLabel}>projected {filter}</p>
+              <p style={s.statLabel}>{historicalPeriod ? "period total" : `projected ${filter}`}</p>
               <p style={{ fontSize: "13px", fontWeight: 600 }}>
                 {fmtShort(projected)}
               </p>
             </div>
             <div style={s.insightBox}>
-              <p style={s.statLabel}>days left</p>
+              <p style={s.statLabel}>{historicalPeriod ? "days in period" : "days left"}</p>
               <p style={{ fontSize: "13px", fontWeight: 600 }}>
-                {daysInfo.remaining}
+                {historicalPeriod ? daysInfo.total : daysInfo.remaining}
               </p>
             </div>
           </div>
@@ -706,7 +764,7 @@ export default function AnalyticsPage() {
         {filteredExpenses.length > 0 ? (
           <div style={s.chartBox}>
             <div style={s.chartHeader}>
-              <p style={s.chartTitle}>spending — {filter}</p>
+              <p style={s.chartTitle}>spending — {formatPeriod(periodDate, filter)}</p>
               <div style={{ display: "flex", gap: "4px" }}>
                 {["bar", "cumulative"].map((m) => (
                   <button
@@ -795,7 +853,7 @@ export default function AnalyticsPage() {
         )}
 
         {/* Balance row */}
-        {active && (
+        {active && !historicalPeriod && (
           <div style={s.section}>
             <div style={s.balanceRow}>
               <span style={s.sectionLabel}>balance — {active.name}</span>
@@ -881,6 +939,31 @@ const s = {
     color: "#000",
     background: "var(--subtle)",
     fontWeight: 600,
+  },
+
+  periodNav: {
+    display: "grid",
+    gridTemplateColumns: "38px 1fr 38px",
+    alignItems: "center",
+    border: "1px solid var(--border-light)",
+    marginBottom: "20px",
+  },
+  periodButton: {
+    height: "34px",
+    border: "none",
+    background: "transparent",
+    fontSize: "16px",
+    color: "var(--text)",
+    cursor: "pointer",
+  },
+  periodButtonDisabled: { color: "#c7c7c7", cursor: "not-allowed" },
+  periodLabel: {
+    fontSize: "11px",
+    fontWeight: 600,
+    textAlign: "center",
+    borderLeft: "1px solid var(--border-light)",
+    borderRight: "1px solid var(--border-light)",
+    lineHeight: "34px",
   },
 
   statsGrid: {

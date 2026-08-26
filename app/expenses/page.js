@@ -10,22 +10,66 @@ const fmt = (n) =>
     maximumFractionDigits: 2,
   });
 
-function getRange(filter) {
-  const now = new Date();
-  const start = new Date();
-  if (filter === "day") {
-    start.setHours(0, 0, 0, 0);
-  } else if (filter === "week") {
-    start.setDate(now.getDate() - now.getDay());
-    start.setHours(0, 0, 0, 0);
-  } else if (filter === "month") {
-    start.setDate(1);
-    start.setHours(0, 0, 0, 0);
-  } else if (filter === "year") {
-    start.setMonth(0, 1);
-    start.setHours(0, 0, 0, 0);
+function getPeriodRange(filter, periodDate = new Date()) {
+  if (filter === "all") return null;
+
+  const start = new Date(periodDate);
+  start.setHours(0, 0, 0, 0);
+  if (filter === "week") start.setDate(start.getDate() - start.getDay());
+  if (filter === "month") start.setDate(1);
+  if (filter === "year") start.setMonth(0, 1);
+
+  const end = new Date(start);
+  if (filter === "day") end.setDate(end.getDate() + 1);
+  if (filter === "week") end.setDate(end.getDate() + 7);
+  if (filter === "month") end.setMonth(end.getMonth() + 1);
+  if (filter === "year") end.setFullYear(end.getFullYear() + 1);
+  return { start, end };
+}
+
+function shiftPeriod(periodDate, filter, amount) {
+  const next = new Date(periodDate);
+  if (filter === "day") next.setDate(next.getDate() + amount);
+  if (filter === "week") next.setDate(next.getDate() + amount * 7);
+  if (filter === "month") {
+    next.setDate(1);
+    next.setMonth(next.getMonth() + amount);
   }
-  return filter === "all" ? null : start.toISOString();
+  if (filter === "year") {
+    next.setMonth(0, 1);
+    next.setFullYear(next.getFullYear() + amount);
+  }
+  return next;
+}
+
+function isCurrentPeriod(periodDate, filter) {
+  if (filter === "all") return true;
+  return (
+    getPeriodRange(filter, periodDate).start.getTime() >=
+    getPeriodRange(filter).start.getTime()
+  );
+}
+
+function formatPeriod(periodDate, filter) {
+  if (filter === "all") return "All expenses";
+  const { start, end } = getPeriodRange(filter, periodDate);
+  if (filter === "day") {
+    return start.toLocaleDateString("en-IN", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  }
+  if (filter === "week") {
+    const lastDay = new Date(end);
+    lastDay.setDate(lastDay.getDate() - 1);
+    return `${start.toLocaleDateString("en-IN", { day: "numeric", month: "short" })} – ${lastDay.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}`;
+  }
+  if (filter === "month") {
+    return start.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  }
+  return String(start.getFullYear());
 }
 
 export default function ExpensesPage() {
@@ -34,6 +78,7 @@ export default function ExpensesPage() {
   const [expenses, setExpenses] = useState([]);
   const [categories, setCategories] = useState([]);
   const [filter, setFilter] = useState("month");
+  const [periodDate, setPeriodDate] = useState(() => new Date());
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [loading, setLoading] = useState(true);
 
@@ -83,15 +128,19 @@ export default function ExpensesPage() {
   }, []);
 
   // No icon column — select only id and name from categories
-  const loadExpenses = useCallback(async (profileId, f) => {
+  const loadExpenses = useCallback(async (profileId, f, selectedDate) => {
     if (!profileId) return;
-    const from = getRange(f);
+    const range = getPeriodRange(f, selectedDate);
     let q = supabase
       .from("expenses")
       .select("*, categories(id, name)")
       .eq("profile_id", profileId)
       .order("created_at", { ascending: false });
-    if (from) q = q.gte("created_at", from);
+    if (range) {
+      q = q
+        .gte("created_at", range.start.toISOString())
+        .lt("created_at", range.end.toISOString());
+    }
     const { data } = await q;
     setExpenses(data || []);
   }, []);
@@ -102,8 +151,8 @@ export default function ExpensesPage() {
   }, [loadCategories, loadProfiles]);
 
   useEffect(() => {
-    if (activeId) loadExpenses(activeId, filter);
-  }, [activeId, filter, loadExpenses]);
+    if (activeId) loadExpenses(activeId, filter, periodDate);
+  }, [activeId, filter, periodDate, loadExpenses]);
 
   // Realtime
   useEffect(() => {
@@ -118,13 +167,13 @@ export default function ExpensesPage() {
           table: "expenses",
           filter: `profile_id=eq.${activeId}`,
         },
-        () => loadExpenses(activeId, filter),
+        () => loadExpenses(activeId, filter, periodDate),
       )
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
     };
-  }, [activeId, filter, loadExpenses]);
+  }, [activeId, filter, periodDate, loadExpenses]);
 
   useEffect(() => {
     const ch = supabase
@@ -213,7 +262,7 @@ export default function ExpensesPage() {
     setTransferTargetId("");
     setTransferring(false);
     loadProfiles();
-    loadExpenses(activeId, filter);
+    loadExpenses(activeId, filter, periodDate);
   }
 
   async function deleteExpense(exp) {
@@ -224,10 +273,21 @@ export default function ExpensesPage() {
       .eq("id", activeId);
     await supabase.from("expenses").delete().eq("id", exp.id);
     loadProfiles();
-    loadExpenses(activeId, filter);
+    loadExpenses(activeId, filter, periodDate);
   }
 
   const timeFilters = ["day", "week", "month", "year", "all"];
+
+  function selectFilter(nextFilter) {
+    setFilter(nextFilter);
+    setPeriodDate(new Date());
+    setCategoryFilter("all");
+  }
+
+  function movePeriod(amount) {
+    setPeriodDate((current) => shiftPeriod(current, filter, amount));
+    setCategoryFilter("all");
+  }
 
   if (loading) {
     return (
@@ -273,12 +333,40 @@ export default function ExpensesPage() {
                 ...s.filterBtn,
                 ...(filter === f ? s.filterActive : {}),
               }}
-              onClick={() => setFilter(f)}
+              onClick={() => selectFilter(f)}
             >
               {f}
             </button>
           ))}
         </div>
+
+        {filter !== "all" && (
+          <div style={s.periodNav} aria-label="Choose time period">
+            <button
+              type="button"
+              style={s.periodButton}
+              onClick={() => movePeriod(-1)}
+              aria-label={`Previous ${filter}`}
+            >
+              ←
+            </button>
+            <p style={s.periodLabel}>{formatPeriod(periodDate, filter)}</p>
+            <button
+              type="button"
+              style={{
+                ...s.periodButton,
+                ...(isCurrentPeriod(periodDate, filter)
+                  ? s.periodButtonDisabled
+                  : {}),
+              }}
+              onClick={() => movePeriod(1)}
+              disabled={isCurrentPeriod(periodDate, filter)}
+              aria-label={`Next ${filter}`}
+            >
+              →
+            </button>
+          </div>
+        )}
 
         {/* Category filter — only shown when categories exist in this period */}
         {activeCategories.length > 0 && (
@@ -501,6 +589,31 @@ const s = {
     color: "#000",
     background: "var(--subtle)",
     fontWeight: 600,
+  },
+
+  periodNav: {
+    display: "grid",
+    gridTemplateColumns: "38px 1fr 38px",
+    alignItems: "center",
+    border: "1px solid var(--border-light)",
+    marginBottom: "14px",
+  },
+  periodButton: {
+    height: "34px",
+    border: "none",
+    background: "transparent",
+    fontSize: "16px",
+    color: "var(--text)",
+    cursor: "pointer",
+  },
+  periodButtonDisabled: { color: "#c7c7c7", cursor: "not-allowed" },
+  periodLabel: {
+    fontSize: "11px",
+    fontWeight: 600,
+    textAlign: "center",
+    borderLeft: "1px solid var(--border-light)",
+    borderRight: "1px solid var(--border-light)",
+    lineHeight: "34px",
   },
 
   catFilterRow: {
