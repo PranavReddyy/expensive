@@ -953,8 +953,13 @@ const s = {
     border: "none",
     background: "transparent",
     fontSize: "16px",
+    lineHeight: 1,
     color: "var(--text)",
     cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
   },
   periodButtonDisabled: { color: "#c7c7c7", cursor: "not-allowed" },
   periodLabel: {

@@ -15,6 +15,7 @@ export default function Nav() {
     { href: '/dashboard', label: 'HOME' },
     { href: '/expenses', label: 'EXPENSES' },
     { href: '/analytics', label: 'ANALYTICS' },
+    { href: '/owes', label: 'OWES' },
   ]
 
   return (
