@@ -6,8 +6,11 @@ export function middleware(request) {
 
   const isPublic = pathname === '/'
   const isApi = pathname.startsWith('/api')
+  // Home-screen installers fetch the manifest and icons without an auth cookie.
+  // Never redirect public files (icons, manifest, scripts, etc.) to the login page.
+  const isPublicAsset = /\/[^/]+\.[^/]+$/.test(pathname)
 
-  if (isApi) return NextResponse.next()
+  if (isApi || isPublicAsset) return NextResponse.next()
 
   if (!authToken && !isPublic) {
     return NextResponse.redirect(new URL('/', request.url))
