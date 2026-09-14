@@ -83,3 +83,57 @@ button, a, div, span {
   user-select: none;
   -webkit-touch-callout: none;
 }
+/* Editable controls must override the app's non-selectable chrome. */
+input, textarea, [contenteditable="true"] {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  -webkit-touch-callout: default;
+}
+input[type="checkbox"] { -webkit-appearance: auto; appearance: auto; }
+
+.home-page {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0 !important;
+  overflow: hidden;
+}
+.home-page > div:first-child {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.home-page > div:first-child > * { flex-shrink: 0; }
+.home-header-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.home-page .home-recent {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  margin-bottom: 0 !important;
+  overflow: hidden;
+}
+.home-recent-list { flex: 1; min-height: 0; overflow: hidden; }
+.home-view-all { flex-shrink: 0; font-size: 10px; color: var(--muted); padding-top: 8px; }
+
+.popup-overlay { overflow: hidden; }
+.popup-panel {
+  max-height: calc(100% - 12px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-padding-block: 16px;
+  padding-bottom: max(20px, env(safe-area-inset-bottom)) !important;
+}
+.popup-panel input, .popup-panel textarea, .popup-panel select { scroll-margin-block: 16px; }
+.popup-panel:focus { outline: none; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+@media (max-height: 620px) {
+  .home-page > div:first-child { padding-top: 10px !important; }
+  .home-page > div:first-child > div:not(.home-recent) { margin-bottom: 10px !important; }
+  .home-page > div:first-child > button { margin-bottom: 12px !important; padding-block: 9px !important; }
+}

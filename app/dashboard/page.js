@@ -1,7 +1,12 @@
 "use client";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useMemo } from "react";
 import { fmt, fmtExpenseDate } from "../../lib/format";
-import { useLatestRequest } from "../../lib/useLatestRequest";
+import { useProfiles, useCategories, useExpenses } from "../../lib/useAppData";
+import DataStatus from "../../components/DataStatus";
+import Link from "next/link";
+import LogoutButton from "../../components/LogoutButton";
+import RecentExpenses from "../../components/RecentExpenses";
+import Modal from "../../components/Modal";
 import Nav from "../../components/Nav";
 import { supabase } from "../../lib/supabase";
 
@@ -13,12 +18,12 @@ function getNowLocal() {
 }
 
 export default function Dashboard() {
-  const [profiles, setProfiles] = useState([]);
-  const [activeId, setActiveId] = useState(null);
-  const [expenses, setExpenses] = useState([]);
-  const [totalSpent, setTotalSpent] = useState(0);
-  const [categories, setCategories] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { profiles, activeId, switchProfile, loading, dataError } = useProfiles();
+
+  const categories = useCategories();
+  const { data: expenses } = useExpenses(activeId, { limit: 6 });
+  const { data: amounts } = useExpenses(activeId, { amountsOnly: true });
+  const totalSpent = useMemo(() => amounts.reduce((sum, expense) => sum + Number(expense.amount), 0), [amounts]);
 
   const [modal, setModal] = useState(null); // 'add' | 'balance' | 'profile'
 
@@ -36,162 +41,21 @@ export default function Dashboard() {
 
   const active = profiles.find((p) => p.id === activeId);
 
-  // ─── Data loading ────────────────────────────────────────────
-
-  const loadCategories = useLatestRequest(async (signal) => {
-    const { data } = await supabase
-      .from("categories")
-      .select("*")
-      .abortSignal(signal)
-      .order("sort_order", { ascending: true });
-    if (signal.aborted || !data) return;
-    setCategories(data);
-  });
-
-  const loadProfiles = useLatestRequest(async (signal) => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .abortSignal(signal)
-      .order("created_at", { ascending: true });
-
-    if (signal.aborted || !data) return;
-    setProfiles(data);
-
-    const saved =
-      typeof window !== "undefined"
-        ? localStorage.getItem("activeProfileId")
-        : null;
-    const validId =
-      saved && data.find((p) => p.id === saved) ? saved : data[0]?.id;
-    if (validId) {
-      setActiveId(validId);
-      if (typeof window !== "undefined")
-        localStorage.setItem("activeProfileId", validId);
-    }
-    setLoading(false);
-  });
-
-  // No icon column in schema — select only id and name
-  const loadExpenses = useLatestRequest(async (signal, profileId) => {
-    if (!profileId) return;
-    const { data } = await supabase
-      .from("expenses")
-      .select("*, categories(id, name)")
-      .abortSignal(signal)
-      .eq("profile_id", profileId)
-      .order("created_at", { ascending: false })
-      .limit(6);
-    if (signal.aborted || !data) return;
-    setExpenses(data);
-  });
-
-  const loadTotalSpent = useLatestRequest(async (signal, profileId) => {
-    if (!profileId) return;
-    const { data } = await supabase
-      .from("expenses")
-      .select("amount")
-      .abortSignal(signal)
-      .eq("profile_id", profileId);
-    if (signal.aborted || !data) return;
-    const total = data.reduce((s, e) => s + parseFloat(e.amount), 0);
-    setTotalSpent(total);
-  });
-
-  // Add at the top of the component
-  const firstInputRef = useRef(null);
-
-  // Add this effect — fires when modal opens
-  useEffect(() => {
-    if (!modal) return;
-    const t = setTimeout(() => {
-      firstInputRef.current?.focus();
-    }, 80); // small delay lets the modal render into the DOM
-    return () => clearTimeout(t);
-  }, [modal]);
-
-  useEffect(() => {
-    loadCategories();
-    loadProfiles();
-  }, [loadCategories, loadProfiles]);
-
-  useEffect(() => {
-    if (activeId) {
-      loadExpenses(activeId);
-      loadTotalSpent(activeId);
-    }
-  }, [activeId, loadExpenses, loadTotalSpent]);
-
-  // ─── Realtime ────────────────────────────────────────────────
-
-  useEffect(() => {
-    const ch = supabase
-      .channel("rt-profiles")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "profiles" },
-        loadProfiles,
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [loadProfiles]);
-
-  useEffect(() => {
-    if (!activeId) return;
-    const ch = supabase
-      .channel(`rt-expenses-${activeId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "expenses",
-          filter: `profile_id=eq.${activeId}`,
-        },
-        () => {
-          loadExpenses(activeId);
-          loadTotalSpent(activeId);
-        },
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [activeId, loadExpenses, loadTotalSpent]);
-
-  useEffect(() => {
-    const ch = supabase
-      .channel("rt-categories")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "categories" },
-        loadCategories,
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [loadCategories]);
-
   // ─── Actions ─────────────────────────────────────────────────
-
-  function switchProfile(id) {
-    setActiveId(id);
-    if (typeof window !== "undefined")
-      localStorage.setItem("activeProfileId", id);
-  }
 
   async function addExpense() {
     setErr("");
-    const amount = parseFloat(form.amount);
+    const amount = Number(form.amount);
     if (!form.reason.trim()) {
       setErr("reason is required");
       return;
     }
-    if (isNaN(amount) || amount <= 0) {
+    if (!Number.isFinite(amount) || amount <= 0) {
       setErr("enter a valid amount");
+      return;
+    }
+    if (!form.datetime || !Number.isFinite(new Date(form.datetime).getTime())) {
+      setErr("enter a valid date and time");
       return;
     }
     setSubmitting(true);
@@ -229,15 +93,12 @@ export default function Dashboard() {
     });
     setModal(null);
     setSubmitting(false);
-    loadProfiles();
-    loadExpenses(activeId);
-    loadTotalSpent(activeId);
   }
 
   async function updateBalance() {
     setErr("");
-    const bal = parseFloat(balanceInput);
-    if (isNaN(bal)) {
+    const bal = Number(balanceInput);
+    if (!balanceInput.trim() || !Number.isFinite(bal)) {
       setErr("enter a valid amount");
       return;
     }
@@ -254,7 +115,6 @@ export default function Dashboard() {
     setModal(null);
     setBalanceInput("");
     setSubmitting(false);
-    loadProfiles();
   }
 
   async function createProfile() {
@@ -264,7 +124,8 @@ export default function Dashboard() {
       return;
     }
     setSubmitting(true);
-    const bal = parseFloat(profileForm.balance) || 0;
+    const bal = Number(profileForm.balance || 0);
+    if (!Number.isFinite(bal)) { setErr("enter a valid balance"); setSubmitting(false); return; }
     const { data, error } = await supabase
       .from("profiles")
       .insert({ name: profileForm.name.trim(), balance: bal })
@@ -279,7 +140,6 @@ export default function Dashboard() {
     setProfileForm({ name: "", balance: "" });
     setSubmitting(false);
     switchProfile(data.id);
-    loadProfiles();
   }
 
   function openModal(type) {
@@ -323,30 +183,27 @@ export default function Dashboard() {
                 </div>
               )), [expenses]);
 
-  if (loading) {
-    return (
-      <div style={s.center}>
-        <p style={{ color: "var(--muted)", fontSize: "12px" }}>loading...</p>
-      </div>
-    );
-  }
+  if (loading || (dataError && !profiles.length)) return <DataStatus error={dataError} />;
 
   return (
-    <div style={s.page}>
+    <div className="home-page" style={s.page}>
       <div style={s.wrap}>
         {/* Header */}
         <div style={s.header}>
           <span style={s.logo}>EXPENSIVE</span>
-          <button style={s.smallBtn} onClick={() => openModal("profile")}>
-            + profile
-          </button>
+          <div className="home-header-actions">
+            <button type="button" style={s.smallBtn} onClick={() => openModal("profile")}>
+              + profile
+            </button>
+            <LogoutButton style={s.smallBtn} />
+          </div>
         </div>
 
         {/* Profile tabs */}
         {profiles.length > 0 && (
           <div style={s.tabs}>
             {profiles.map((p) => (
-              <button
+              <button type="button"
                 key={p.id}
                 style={{ ...s.tab, ...(p.id === activeId ? s.tabActive : {}) }}
                 onClick={() => switchProfile(p.id)}
@@ -360,7 +217,7 @@ export default function Dashboard() {
         {profiles.length === 0 && (
           <div style={s.empty}>
             <p>no profiles yet.</p>
-            <button style={s.btn} onClick={() => openModal("profile")}>
+            <button type="button" style={s.btn} onClick={() => openModal("profile")}>
               create first profile
             </button>
           </div>
@@ -381,7 +238,7 @@ export default function Dashboard() {
                   {fmt(active.balance)}
                 </p>
               </div>
-              <button style={s.editBtn} onClick={() => openModal("balance")}>
+              <button type="button" style={s.editBtn} onClick={() => openModal("balance")}>
                 edit
               </button>
             </div>
@@ -400,18 +257,17 @@ export default function Dashboard() {
         )}
 
         {active && (
-          <button style={s.addBtn} onClick={() => openModal("add")}>
+          <button type="button" style={s.addBtn} onClick={() => openModal("add")}>
             + log expense
           </button>
         )}
 
         {/* Recent expenses */}
         {active && expenses.length > 0 && (
-          <div style={s.section}>
+          <div className="home-recent" style={s.section}>
             <p style={s.sectionLabel}>recent</p>
-            <div style={s.list}>
-              {expenseRows}
-            </div>
+            <RecentExpenses style={s.list}>{expenseRows}</RecentExpenses>
+            <Link href="/expenses" className="home-view-all">all expenses →</Link>
           </div>
         )}
 
@@ -422,17 +278,20 @@ export default function Dashboard() {
 
       {/* ── Modals ── */}
       {modal && (
-        <div style={s.overlay} onClick={() => setModal(null)}>
-          <div style={s.modal} onClick={(e) => e.stopPropagation()}>
+        <Modal title={modal === "add" ? "log expense" : modal === "balance" ? "edit balance" : "new profile"}
+          style={s.modal} overlayStyle={s.overlay} busy={submitting}
+          onClose={() => setModal(null)}
+          onSubmit={modal === "add" ? addExpense : modal === "balance" ? updateBalance : createProfile}
+          onError={(error) => { setErr(error.message || "could not save"); setSubmitting(false); }}>
             {/* Add Expense Modal */}
             {modal === "add" && (
               <>
                 <p style={s.modalTitle}>log expense</p>
                 <div style={s.mField}>
-                  <label style={s.mLabel}>reason *</label>
+                  <label htmlFor="expense-reason" style={s.mLabel}>reason *</label>
                   <input
-                    ref={firstInputRef}
                     style={s.mInput}
+                    id="expense-reason"
                     value={form.reason}
                     onChange={(e) =>
                       setForm((f) => ({ ...f, reason: e.target.value }))
@@ -441,12 +300,12 @@ export default function Dashboard() {
                   />
                 </div>
                 <div style={s.mField}>
-                  <label style={s.mLabel}>amount (₹) *</label>
+                  <label htmlFor="expense-amount" style={s.mLabel}>amount (₹) *</label>
                   <input
                     style={s.mInput}
-                    type="number"
-                    min="0"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
+                    id="expense-amount"
                     value={form.amount}
                     onChange={(e) =>
                       setForm((f) => ({ ...f, amount: e.target.value }))
@@ -456,10 +315,11 @@ export default function Dashboard() {
                 </div>
 
                 <div style={s.mField}>
-                  <label style={s.mLabel}>date & time</label>
+                  <label htmlFor="expense-datetime" style={s.mLabel}>date & time</label>
                   <input
                     style={s.mInput}
                     type="datetime-local"
+                    id="expense-datetime"
                     value={form.datetime}
                     onChange={(e) =>
                       setForm((f) => ({ ...f, datetime: e.target.value }))
@@ -473,7 +333,7 @@ export default function Dashboard() {
                     <label style={s.mLabel}>category</label>
                     <div style={s.catGrid}>
                       {categories.map((c) => (
-                        <button
+                        <button type="button"
                           key={c.id}
                           style={{
                             ...s.catBtn,
@@ -496,9 +356,10 @@ export default function Dashboard() {
                 )}
 
                 <div style={s.mField}>
-                  <label style={s.mLabel}>notes</label>
+                  <label htmlFor="expense-notes" style={s.mLabel}>notes</label>
                   <textarea
                     style={{ ...s.mInput, height: "60px", resize: "none" }}
+                    id="expense-notes"
                     value={form.notes}
                     onChange={(e) =>
                       setForm((f) => ({ ...f, notes: e.target.value }))
@@ -508,12 +369,12 @@ export default function Dashboard() {
                 </div>
                 {err && <p style={s.mErr}>// {err}</p>}
                 <div style={s.mBtns}>
-                  <button style={s.mCancel} onClick={() => setModal(null)}>
+                  <button type="button" disabled={submitting} style={s.mCancel} onClick={() => setModal(null)}>
                     cancel
                   </button>
                   <button
                     style={s.mConfirm}
-                    onClick={addExpense}
+                    type="submit"
                     disabled={submitting}
                   >
                     {submitting ? "saving..." : "save"}
@@ -527,24 +388,24 @@ export default function Dashboard() {
               <>
                 <p style={s.modalTitle}>edit balance — {active?.name}</p>
                 <div style={s.mField}>
-                  <label style={s.mLabel}>new balance (₹)</label>
+                  <label htmlFor="balance-input" style={s.mLabel}>new balance (₹)</label>
                   <input
-                    ref={firstInputRef}
                     style={s.mInput}
-                    type="number"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
+                    id="balance-input"
                     value={balanceInput}
                     onChange={(e) => setBalanceInput(e.target.value)}
                   />
                 </div>
                 {err && <p style={s.mErr}>// {err}</p>}
                 <div style={s.mBtns}>
-                  <button style={s.mCancel} onClick={() => setModal(null)}>
+                  <button type="button" disabled={submitting} style={s.mCancel} onClick={() => setModal(null)}>
                     cancel
                   </button>
                   <button
                     style={s.mConfirm}
-                    onClick={updateBalance}
+                    type="submit"
                     disabled={submitting}
                   >
                     {submitting ? "saving..." : "update"}
@@ -558,10 +419,10 @@ export default function Dashboard() {
               <>
                 <p style={s.modalTitle}>new profile</p>
                 <div style={s.mField}>
-                  <label style={s.mLabel}>name *</label>
+                  <label htmlFor="profile-name" style={s.mLabel}>name *</label>
                   <input
-                    ref={firstInputRef}
                     style={s.mInput}
+                    id="profile-name"
                     value={profileForm.name}
                     onChange={(e) =>
                       setProfileForm((f) => ({ ...f, name: e.target.value }))
@@ -570,11 +431,12 @@ export default function Dashboard() {
                   />
                 </div>
                 <div style={s.mField}>
-                  <label style={s.mLabel}>starting balance (₹)</label>
+                  <label htmlFor="profile-balance" style={s.mLabel}>starting balance (₹)</label>
                   <input
                     style={s.mInput}
-                    type="number"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
+                    id="profile-balance"
                     value={profileForm.balance}
                     onChange={(e) =>
                       setProfileForm((f) => ({ ...f, balance: e.target.value }))
@@ -584,12 +446,12 @@ export default function Dashboard() {
                 </div>
                 {err && <p style={s.mErr}>// {err}</p>}
                 <div style={s.mBtns}>
-                  <button style={s.mCancel} onClick={() => setModal(null)}>
+                  <button type="button" disabled={submitting} style={s.mCancel} onClick={() => setModal(null)}>
                     cancel
                   </button>
                   <button
                     style={s.mConfirm}
-                    onClick={createProfile}
+                    type="submit"
                     disabled={submitting}
                   >
                     {submitting ? "creating..." : "create"}
@@ -597,8 +459,7 @@ export default function Dashboard() {
                 </div>
               </>
             )}
-          </div>
-        </div>
+        </Modal>
       )}
 
       <Nav />

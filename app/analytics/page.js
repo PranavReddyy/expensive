@@ -1,7 +1,8 @@
 "use client";
-import { useState, useEffect, useMemo, memo } from "react";
+import { useState, useMemo, memo } from "react";
 import { fmt, fmtWeekday } from "../../lib/format";
-import { useLatestRequest, useEventCallback } from "../../lib/useLatestRequest";
+import { useProfiles, useExpenses, usePageState } from "../../lib/useAppData";
+import DataStatus from "../../components/DataStatus";
 import Nav from "../../components/Nav";
 import { supabase } from "../../lib/supabase";
 
@@ -470,85 +471,18 @@ const DeltaBadge = memo(function DeltaBadge({ current, prev }) {
 });
 
 export default function AnalyticsPage() {
-  const [profiles, setProfiles] = useState([]);
-  const [activeId, setActiveId] = useState(null);
-  const [expenses, setExpenses] = useState([]);
-  const [filter, setFilter] = useState("month");
-  const [periodDate, setPeriodDate] = useState(() => new Date());
-  const [loading, setLoading] = useState(true);
-  const [chartMode, setChartMode] = useState("bar");
+  const { profiles, activeId, switchProfile, loading, dataError } = useProfiles();
+  const [filter, setFilter] = usePageState("analytics:filter", "month");
+  const [periodDate, setPeriodDate] = usePageState("analytics:periodDate", () => new Date());
+  const [chartMode, setChartMode] = usePageState("analytics:chartMode", "bar");
+
+  const range = getPeriodRange(filter, periodDate);
+  const previous = getPeriodRange(filter, shiftPeriod(periodDate, filter, -1));
+  const { data: expenses } = useExpenses(activeId, {
+    start: previous.start.toISOString(), end: range.end.toISOString(), ascending: true,
+  });
 
   const active = profiles.find((p) => p.id === activeId);
-
-  const loadProfiles = useLatestRequest(async (signal) => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .abortSignal(signal)
-      .order("created_at", { ascending: true });
-    if (signal.aborted || !data) return;
-    setProfiles(data);
-    const saved =
-      typeof window !== "undefined"
-        ? localStorage.getItem("activeProfileId")
-        : null;
-    const validId =
-      saved && data.find((p) => p.id === saved) ? saved : data[0]?.id;
-    if (validId) setActiveId(validId);
-    setLoading(false);
-  });
-
-  // Fetch with category join — no icon column
-  const loadExpenses = useLatestRequest(async (signal, profileId, selectedFilter, selectedDate) => {
-    const range = getPeriodRange(selectedFilter, selectedDate);
-    const previous = getPeriodRange(selectedFilter, shiftPeriod(selectedDate, selectedFilter, -1));
-    if (!profileId) return;
-    const { data } = await supabase
-      .from("expenses")
-      .select("id, amount, reason, created_at, categories(id, name)")
-      .abortSignal(signal)
-      .eq("profile_id", profileId)
-      .gte("created_at", previous.start.toISOString())
-      .lt("created_at", range.end.toISOString())
-      .order("created_at", { ascending: true });
-    if (signal.aborted || !data) return;
-    setExpenses(data);
-  });
-
-  useEffect(() => {
-    loadProfiles();
-  }, [loadProfiles]);
-  useEffect(() => {
-    if (activeId) loadExpenses(activeId, filter, periodDate);
-  }, [activeId, filter, periodDate, loadExpenses]);
-
-  const refreshExpenses = useEventCallback(() => loadExpenses(activeId, filter, periodDate));
-
-  useEffect(() => {
-    if (!activeId) return;
-    const ch = supabase
-      .channel(`analytics-${activeId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "expenses",
-          filter: `profile_id=eq.${activeId}`,
-        },
-        refreshExpenses,
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [activeId, refreshExpenses]);
-
-  function switchProfile(id) {
-    setActiveId(id);
-    if (typeof window !== "undefined")
-      localStorage.setItem("activeProfileId", id);
-  }
 
   const { filteredExpenses, prevExpenses, chartData, cumulData, total, prevTotal, avg, maxSingle, topCategories, biggestExpense, busiest } = useMemo(() => {
     const currentRange = getPeriodRange(filter, periodDate);
@@ -625,13 +559,7 @@ export default function AnalyticsPage() {
     setPeriodDate((current) => shiftPeriod(current, filter, amount));
   }
 
-  if (loading) {
-    return (
-      <div style={s.center}>
-        <p style={{ color: "var(--muted)", fontSize: "12px" }}>loading...</p>
-      </div>
-    );
-  }
+  if (loading || (dataError && !profiles.length)) return <DataStatus error={dataError} />;
 
   return (
     <div style={s.page}>

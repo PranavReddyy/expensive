@@ -1,7 +1,7 @@
 'use client'
-import { memo, useRef } from 'react'
+import { memo } from 'react'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 
 const links = [
     { href: '/dashboard', label: 'HOME' },
@@ -12,22 +12,6 @@ const links = [
 
 const Nav = memo(function Nav() {
   const pathname = usePathname()
-  const router = useRouter()
-  const loggingOut = useRef(false)
-
-  async function handleLogout() {
-    if (loggingOut.current) return
-    loggingOut.current = true
-    try {
-      const response = await fetch('/api/auth/logout', { method: 'POST' })
-      if (response.ok) router.replace('/')
-    } finally {
-      loggingOut.current = false
-    }
-  }
-
-
-
   return (
     <nav style={s.nav}>
       {links.map(({ href, label }) => (
@@ -42,9 +26,6 @@ const Nav = memo(function Nav() {
           {label}
         </Link>
       ))}
-      <button onClick={handleLogout} style={s.logout}>
-        EXIT
-      </button>
     </nav>
   )
 });
@@ -82,17 +63,5 @@ const s = {
     color: '#000',
     background: 'var(--subtle)',
     fontWeight: 600,
-  },
-  logout: {
-    width: '64px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '10px',
-    fontWeight: 500,
-    letterSpacing: '0.08em',
-    color: 'var(--muted)',
-    background: 'transparent',
-    border: 'none',
   },
 }

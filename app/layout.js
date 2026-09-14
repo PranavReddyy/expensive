@@ -1,4 +1,5 @@
 import "./globals.css";
+import AppRuntime from "../components/AppRuntime";
 
 export const metadata = {
   title: "expensive",
@@ -46,7 +47,7 @@ export default function RootLayout({ children }) {
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" />
         <script src="/disable-zoom.js" defer></script>
       </head>
-      <body className="bg-white no-zoom">{children}</body>
+      <body className="bg-white no-zoom"><AppRuntime />{children}</body>
     </html>
   );
 }

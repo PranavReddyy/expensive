@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { fmt } from "../../lib/format";
-import { useLatestRequest } from "../../lib/useLatestRequest";
+import { useProfiles, usePeople, useDebts } from "../../lib/useAppData";
+import DataStatus from "../../components/DataStatus";
+import Modal from "../../components/Modal";
 import Nav from "../../components/Nav";
 import { supabase } from "../../lib/supabase";
 
@@ -14,11 +16,9 @@ const emptyDebt = {
 };
 
 export default function OwesPage() {
-  const [profiles, setProfiles] = useState([]);
-  const [activeId, setActiveId] = useState(null);
-  const [people, setPeople] = useState([]);
-  const [debts, setDebts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { profiles, activeId, switchProfile, loading, dataError } = useProfiles();
+  const people = usePeople(activeId);
+  const debts = useDebts(activeId);
   const [modal, setModal] = useState(null);
   const [personName, setPersonName] = useState("");
   const [debtForm, setDebtForm] = useState(emptyDebt);
@@ -33,90 +33,6 @@ export default function OwesPage() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
-
-  const loadProfiles = useLatestRequest(async (signal) => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .abortSignal(signal)
-      .order("created_at", { ascending: true });
-    if (signal.aborted || !data) return;
-    setProfiles(data);
-    const saved =
-      typeof window !== "undefined"
-        ? localStorage.getItem("activeProfileId")
-        : null;
-    const validId =
-      saved && data.some((profile) => profile.id === saved)
-        ? saved
-        : data[0]?.id;
-    if (validId) setActiveId(validId);
-    setLoading(false);
-  });
-
-  const loadPeople = useLatestRequest(async (signal, profileId) => {
-    if (!profileId) return;
-    const { data } = await supabase
-      .from("people")
-      .select("*")
-      .abortSignal(signal)
-      .eq("profile_id", profileId)
-      .order("name", { ascending: true });
-    if (signal.aborted || !data) return;
-    setPeople(data);
-  });
-
-  const loadDebts = useLatestRequest(async (signal, profileId) => {
-    if (!profileId) return;
-    const { data } = await supabase
-      .from("debts")
-      .select("*, people(id, name)")
-      .abortSignal(signal)
-      .eq("profile_id", profileId)
-      .order("created_at", { ascending: false });
-    if (signal.aborted || !data) return;
-    setDebts(data);
-  });
-
-  useEffect(() => {
-    loadProfiles();
-  }, [loadProfiles]);
-
-  useEffect(() => {
-    if (!activeId) return;
-    loadPeople(activeId);
-    loadDebts(activeId);
-  }, [activeId, loadDebts, loadPeople]);
-
-  useEffect(() => {
-    const channel = supabase
-      .channel("owes-profiles")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "profiles" },
-        loadProfiles,
-      )
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [loadProfiles]);
-
-  useEffect(() => {
-    if (!activeId) return;
-    const channel = supabase
-      .channel(`owes-${activeId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "people" },
-        () => loadPeople(activeId),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "debts" },
-        () => loadDebts(activeId),
-      )
-      .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, [activeId, loadDebts, loadPeople]);
 
   const { openDebts, settledDebts, owedToYou, youOwe, balances } = useMemo(() => {
     const openDebts = [];
@@ -146,11 +62,6 @@ export default function OwesPage() {
     const { theyOwe = 0, iOwe = 0 } = balances.get(person.id) || {};
     return { person, theyOwe, iOwe, net: theyOwe - iOwe };
   }), [balances, people]);
-
-  function switchProfile(id) {
-    setActiveId(id);
-    localStorage.setItem("activeProfileId", id);
-  }
 
   const openModal = useCallback((type, debt = null) => {
     setErr("");
@@ -198,7 +109,6 @@ export default function OwesPage() {
     }
     setSubmitting(false);
     closeModal();
-    loadPeople(activeId);
   }
 
   async function addDebt() {
@@ -231,7 +141,6 @@ export default function OwesPage() {
     }
     setSubmitting(false);
     closeModal();
-    loadDebts(activeId);
   }
 
   async function addSplit() {
@@ -276,7 +185,6 @@ export default function OwesPage() {
     }
     setSubmitting(false);
     closeModal();
-    loadDebts(activeId);
   }
 
   async function recordPayment() {
@@ -303,7 +211,6 @@ export default function OwesPage() {
     }
     setSubmitting(false);
     closeModal();
-    loadDebts(activeId);
   }
 
   const debtRows = useMemo(() => openDebts.map((debt) => {
@@ -324,7 +231,7 @@ export default function OwesPage() {
                         </div>
                         <div style={s.debtSide}>
                           <p style={s.amount}>{fmt(debt.remaining_amount)}</p>
-                          <button
+                          <button type="button"
                             style={s.settleBtn}
                             onClick={() => openModal("payment", debt)}
                           >
@@ -371,9 +278,7 @@ export default function OwesPage() {
                     },
                   ), [personBalances]);
 
-  if (loading) {
-    return <div style={s.center}>loading...</div>;
-  }
+  if (loading || (dataError && !profiles.length)) return <DataStatus error={dataError} />;
 
   return (
     <div style={s.page}>
@@ -384,7 +289,7 @@ export default function OwesPage() {
         {profiles.length > 0 && (
           <div style={s.tabs}>
             {profiles.map((profile) => (
-              <button
+              <button type="button"
                 key={profile.id}
                 style={{
                   ...s.tab,
@@ -418,17 +323,17 @@ export default function OwesPage() {
             </div>
 
             <div style={s.actionRow}>
-              <button style={s.actionBtn} onClick={() => openModal("debt")}>
+              <button type="button" style={s.actionBtn} onClick={() => openModal("debt")}>
                 + add amount
               </button>
-              <button
+              <button type="button"
                 style={s.actionBtn}
                 onClick={() => openModal("split")}
                 disabled={people.length === 0}
               >
                 split payment
               </button>
-              <button style={s.actionBtn} onClick={() => openModal("person")}>
+              <button type="button" style={s.actionBtn} onClick={() => openModal("person")}>
                 + person
               </button>
             </div>
@@ -473,22 +378,21 @@ export default function OwesPage() {
       </div>
 
       {modal && (
-        <div style={s.overlay} onClick={closeModal}>
-          <div style={s.modal} onClick={(event) => event.stopPropagation()}>
+        <Modal title={modal === "person" ? "add person" : modal === "debt" ? "add amount" : modal === "split" ? "split a payment" : "record payment"}
+          style={s.modal} overlayStyle={s.overlay} busy={submitting} onClose={closeModal}
+          onSubmit={modal === "person" ? addPerson : modal === "debt" ? addDebt : modal === "split" ? addSplit : recordPayment}
+          onError={(error) => { setErr(error.message || "could not save"); setSubmitting(false); }}>
             {modal === "person" && (
               <>
                 <p style={s.modalTitle}>add person</p>
                 <input
-                  autoFocus
                   style={s.input}
                   placeholder="name"
                   value={personName}
                   onChange={(event) => setPersonName(event.target.value)}
-                  onKeyDown={(event) => event.key === "Enter" && addPerson()}
                 />
                 <ModalActions
                   onCancel={closeModal}
-                  onConfirm={addPerson}
                   busy={submitting}
                   label="save person"
                 />
@@ -506,7 +410,7 @@ export default function OwesPage() {
                   }
                 />
                 <div style={s.directionPicker}>
-                  <button
+                  <button type="button"
                     style={{
                       ...s.directionButton,
                       ...(debtForm.direction === "they_owe_me"
@@ -519,7 +423,7 @@ export default function OwesPage() {
                   >
                     they owe me
                   </button>
-                  <button
+                  <button type="button"
                     style={{
                       ...s.directionButton,
                       ...(debtForm.direction === "i_owe_them"
@@ -555,7 +459,6 @@ export default function OwesPage() {
                 />
                 <ModalActions
                   onCancel={closeModal}
-                  onConfirm={addDebt}
                   busy={submitting}
                   label="save amount"
                 />
@@ -619,7 +522,7 @@ export default function OwesPage() {
                     .map((person) => {
                       const checked = splitForm.people.includes(person.id);
                       return (
-                        <button
+                        <button type="button"
                           key={person.id}
                           style={{
                             ...s.personPick,
@@ -644,7 +547,6 @@ export default function OwesPage() {
                 </div>
                 <ModalActions
                   onCancel={closeModal}
-                  onConfirm={addSplit}
                   busy={submitting}
                   label="create split"
                 />
@@ -664,7 +566,6 @@ export default function OwesPage() {
                   remaining: {fmt(selectedDebt.remaining_amount)}
                 </p>
                 <input
-                  autoFocus
                   style={s.input}
                   inputMode="decimal"
                   value={paymentAmount}
@@ -672,7 +573,6 @@ export default function OwesPage() {
                 />
                 <ModalActions
                   onCancel={closeModal}
-                  onConfirm={recordPayment}
                   busy={submitting}
                   label="record payment"
                 />
@@ -680,21 +580,20 @@ export default function OwesPage() {
             )}
 
             {err && <p style={s.error}>// {err}</p>}
-          </div>
-        </div>
+        </Modal>
       )}
       <Nav />
     </div>
   );
 }
 
-function ModalActions({ onCancel, onConfirm, busy, label }) {
+function ModalActions({ onCancel, busy, label }) {
   return (
     <div style={s.modalActions}>
-      <button style={s.cancelBtn} onClick={onCancel}>
+      <button type="button" style={s.cancelBtn} onClick={onCancel} disabled={busy}>
         cancel
       </button>
-      <button style={s.confirmBtn} onClick={onConfirm} disabled={busy}>
+      <button type="submit" style={s.confirmBtn} disabled={busy}>
         {busy ? "saving..." : label}
       </button>
     </div>
@@ -711,7 +610,6 @@ function PersonSearch({ people, value, onChange }) {
   return (
     <div style={s.personSearch}>
       <input
-        autoFocus
         style={s.input}
         placeholder="search people"
         value={query}

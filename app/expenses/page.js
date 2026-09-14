@@ -1,7 +1,9 @@
 "use client";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { fmt, fmtFullExpenseDate } from "../../lib/format";
-import { useLatestRequest, useEventCallback } from "../../lib/useLatestRequest";
+import { useProfiles, useCategories, useExpenses, usePageState } from "../../lib/useAppData";
+import DataStatus from "../../components/DataStatus";
+import Modal from "../../components/Modal";
 import Nav from "../../components/Nav";
 import { supabase } from "../../lib/supabase";
 
@@ -68,19 +70,21 @@ function formatPeriod(periodDate, filter) {
 }
 
 export default function ExpensesPage() {
-  const [profiles, setProfiles] = useState([]);
-  const [activeId, setActiveId] = useState(null);
-  const [expenses, setExpenses] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [filter, setFilter] = useState("month");
-  const [periodDate, setPeriodDate] = useState(() => new Date());
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [loading, setLoading] = useState(true);
+  const { profiles, activeId, switchProfile, loading, dataError } = useProfiles();
+  const [filter, setFilter] = usePageState("expenses:filter", "month");
+  const [periodDate, setPeriodDate] = usePageState("expenses:periodDate", () => new Date());
+  const [categoryFilter, setCategoryFilter] = usePageState("expenses:categoryFilter", "all");
 
   const [transferExpense, setTransferExpense] = useState(null);
   const [transferTargetId, setTransferTargetId] = useState("");
   const [transferring, setTransferring] = useState(false);
   const [tErr, setTErr] = useState("");
+
+  const categories = useCategories();
+  const range = getPeriodRange(filter, periodDate);
+  const { data: expenses } = useExpenses(activeId, {
+    start: range?.start.toISOString(), end: range?.end.toISOString(),
+  });
 
   const active = profiles.find((p) => p.id === activeId);
   const otherProfiles = useMemo(() => profiles.filter((p) => p.id !== activeId), [profiles, activeId]);
@@ -97,122 +101,6 @@ export default function ExpensesPage() {
     const ids = new Set(expenses.map((e) => e.category_id));
     return categories.filter((category) => ids.has(category.id));
   }, [categories, expenses]);
-
-  // ─── Data loading ────────────────────────────────────────────
-
-  const loadCategories = useLatestRequest(async (signal) => {
-    const { data } = await supabase
-      .from("categories")
-      .select("*")
-      .abortSignal(signal)
-      .order("sort_order", { ascending: true });
-    if (signal.aborted || !data) return;
-    setCategories(data);
-  });
-
-  const loadProfiles = useLatestRequest(async (signal) => {
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .abortSignal(signal)
-      .order("created_at", { ascending: true });
-    if (signal.aborted || !data) return;
-    setProfiles(data);
-    const saved =
-      typeof window !== "undefined"
-        ? localStorage.getItem("activeProfileId")
-        : null;
-    const validId =
-      saved && data.find((p) => p.id === saved) ? saved : data[0]?.id;
-    if (validId) setActiveId(validId);
-    setLoading(false);
-  });
-
-  // No icon column — select only id and name from categories
-  const loadExpenses = useLatestRequest(async (signal, profileId, f, selectedDate) => {
-    if (!profileId) return;
-    const range = getPeriodRange(f, selectedDate);
-    let q = supabase
-      .from("expenses")
-      .select("*, categories(id, name)")
-      .abortSignal(signal)
-      .eq("profile_id", profileId)
-      .order("created_at", { ascending: false });
-    if (range) {
-      q = q
-        .gte("created_at", range.start.toISOString())
-        .lt("created_at", range.end.toISOString());
-    }
-    const { data } = await q;
-    if (signal.aborted || !data) return;
-    setExpenses(data);
-  });
-
-  useEffect(() => {
-    loadCategories();
-    loadProfiles();
-  }, [loadCategories, loadProfiles]);
-
-  useEffect(() => {
-    if (activeId) loadExpenses(activeId, filter, periodDate);
-  }, [activeId, filter, periodDate, loadExpenses]);
-
-  // Realtime
-  const refreshExpenses = useEventCallback(() => loadExpenses(activeId, filter, periodDate));
-
-  useEffect(() => {
-    if (!activeId) return;
-    const ch = supabase
-      .channel(`exp-page-${activeId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "expenses",
-          filter: `profile_id=eq.${activeId}`,
-        },
-        refreshExpenses,
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [activeId, refreshExpenses]);
-
-  useEffect(() => {
-    const ch = supabase
-      .channel("exp-profiles-rt")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "profiles" },
-        loadProfiles,
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [loadProfiles]);
-
-  useEffect(() => {
-    const ch = supabase
-      .channel("exp-categories-rt")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "categories" },
-        loadCategories,
-      )
-      .subscribe();
-    return () => {
-      supabase.removeChannel(ch);
-    };
-  }, [loadCategories]);
-
-  function switchProfile(id) {
-    setActiveId(id);
-    if (typeof window !== "undefined")
-      localStorage.setItem("activeProfileId", id);
-  }
 
   async function handleTransfer() {
     if (!transferTargetId || !transferExpense) {
@@ -266,8 +154,6 @@ export default function ExpensesPage() {
     setTransferExpense(null);
     setTransferTargetId("");
     setTransferring(false);
-    loadProfiles();
-    loadExpenses(activeId, filter, periodDate);
   }
 
   const deleteExpense = useCallback(async (exp) => {
@@ -277,9 +163,7 @@ export default function ExpensesPage() {
       .update({ balance: (active?.balance || 0) + parseFloat(exp.amount) })
       .eq("id", activeId);
     await supabase.from("expenses").delete().eq("id", exp.id);
-    loadProfiles();
-    loadExpenses(activeId, filter, periodDate);
-  }, [active, activeId, filter, periodDate, loadProfiles, loadExpenses]);
+  }, [active, activeId, filter, periodDate]);
 
   const timeFilters = ["day", "week", "month", "year", "all"];
 
@@ -329,7 +213,7 @@ export default function ExpensesPage() {
                 </div>
                 <div style={s.rowActions}>
                   {otherProfiles.length > 0 && (
-                    <button
+                    <button type="button"
                       style={s.actionBtn}
                       onClick={() => {
                         setTransferExpense(e);
@@ -340,7 +224,7 @@ export default function ExpensesPage() {
                       transfer
                     </button>
                   )}
-                  <button
+                  <button type="button"
                     style={{ ...s.actionBtn, color: "var(--muted)" }}
                     onClick={() => deleteExpense(e)}
                   >
@@ -350,13 +234,7 @@ export default function ExpensesPage() {
               </div>
             )), [visibleExpenses, otherProfiles, deleteExpense]);
 
-  if (loading) {
-    return (
-      <div style={s.center}>
-        <p style={{ color: "var(--muted)", fontSize: "12px" }}>loading...</p>
-      </div>
-    );
-  }
+  if (loading || (dataError && !profiles.length)) return <DataStatus error={dataError} />;
 
   return (
     <div style={s.page}>
@@ -369,7 +247,7 @@ export default function ExpensesPage() {
         {profiles.length > 0 && (
           <div style={s.tabs}>
             {profiles.map((p) => (
-              <button
+              <button type="button"
                 key={p.id}
                 style={{ ...s.tab, ...(p.id === activeId ? s.tabActive : {}) }}
                 onClick={() => switchProfile(p.id)}
@@ -383,7 +261,7 @@ export default function ExpensesPage() {
         {/* Time filter bar */}
         <div style={s.filterBar}>
           {timeFilters.map((f) => (
-            <button
+            <button type="button"
               key={f}
               style={{
                 ...s.filterBtn,
@@ -427,7 +305,7 @@ export default function ExpensesPage() {
         {/* Category filter — only shown when categories exist in this period */}
         {activeCategories.length > 0 && (
           <div style={s.catFilterRow}>
-            <button
+            <button type="button"
               style={{
                 ...s.catFilterBtn,
                 ...(categoryFilter === "all" ? s.catFilterActive : {}),
@@ -437,7 +315,7 @@ export default function ExpensesPage() {
               all
             </button>
             {activeCategories.map((c) => (
-              <button
+              <button type="button"
                 key={c.id}
                 style={{
                   ...s.catFilterBtn,
@@ -476,8 +354,9 @@ export default function ExpensesPage() {
 
       {/* Transfer Modal */}
       {transferExpense && (
-        <div style={s.overlay} onClick={() => setTransferExpense(null)}>
-          <div style={s.modal} onClick={(e) => e.stopPropagation()}>
+        <Modal title="transfer expense" style={s.modal} overlayStyle={s.overlay}
+          busy={transferring} onClose={() => setTransferExpense(null)} onSubmit={handleTransfer}
+          onError={(error) => { setTErr(error.message || "could not transfer"); setTransferring(false); }}>
             <p style={s.modalTitle}>transfer expense</p>
             <div style={s.transferInfo}>
               <p style={s.reason}>{transferExpense.reason}</p>
@@ -497,7 +376,7 @@ export default function ExpensesPage() {
               }}
             >
               {otherProfiles.map((p) => (
-                <button
+                <button type="button"
                   key={p.id}
                   style={{
                     ...s.profileOption,
@@ -514,22 +393,22 @@ export default function ExpensesPage() {
             </div>
             {tErr && <p style={s.mErr}>// {tErr}</p>}
             <div style={s.mBtns}>
-              <button
+              <button type="button"
                 style={s.mCancel}
+                disabled={transferring}
                 onClick={() => setTransferExpense(null)}
               >
                 cancel
               </button>
               <button
                 style={s.mConfirm}
-                onClick={handleTransfer}
+                type="submit"
                 disabled={transferring || !transferTargetId}
               >
                 {transferring ? "transferring..." : "confirm transfer"}
               </button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       <Nav />
