@@ -41,7 +41,10 @@ export default function RootLayout({ children }) {
 
         {/* Disable tap highlight on iOS */}
         <meta name="format-detection" content="telephone=no" />
-        <script src="/disable-zoom.js"></script>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" />
+        <script src="/disable-zoom.js" defer></script>
       </head>
       <body className="bg-white no-zoom">{children}</body>
     </html>

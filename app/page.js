@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
@@ -8,9 +8,12 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const loginPending = useRef(false);
 
   async function handleLogin(e) {
     e.preventDefault();
+    if (loginPending.current) return;
+    loginPending.current = true;
     setLoading(true);
     setError("");
 
@@ -29,6 +32,7 @@ export default function LoginPage() {
     } catch {
       setError("something went wrong");
     } finally {
+      loginPending.current = false;
       setLoading(false);
     }
   }

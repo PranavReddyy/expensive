@@ -1,14 +1,9 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useMemo, memo } from "react";
+import { fmt, fmtWeekday } from "../../lib/format";
+import { useLatestRequest, useEventCallback } from "../../lib/useLatestRequest";
 import Nav from "../../components/Nav";
 import { supabase } from "../../lib/supabase";
-
-const fmt = (n) =>
-  "₹" +
-  Number(n || 0).toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 
 const fmtShort = (n) => {
   if (n >= 10000000) return "₹" + (n / 10000000).toFixed(1) + "Cr";
@@ -260,7 +255,7 @@ function getDaysInfo(filter, periodDate) {
   return null;
 }
 
-function BarChart({ data }) {
+const BarChart = memo(function BarChart({ data }) {
   const max = Math.max(...data.map((d) => d.value), 1);
   const total = data.length;
   const chartH = 100;
@@ -302,9 +297,9 @@ function BarChart({ data }) {
       })}
     </svg>
   );
-}
+});
 
-function LineChart({ data }) {
+const LineChart = memo(function LineChart({ data }) {
   if (!data || data.length === 0) return null;
   const max = Math.max(...data.map((d) => d.value), 1);
   const W = 320;
@@ -351,9 +346,9 @@ function LineChart({ data }) {
       })}
     </svg>
   );
-}
+});
 
-function DonutChart({ data, total }) {
+const DonutChart = memo(function DonutChart({ data, total }) {
   if (!data || data.length === 0) return null;
   const R = 44;
   const cx = 60;
@@ -453,9 +448,9 @@ function DonutChart({ data, total }) {
       </div>
     </div>
   );
-}
+});
 
-function DeltaBadge({ current, prev }) {
+const DeltaBadge = memo(function DeltaBadge({ current, prev }) {
   if (prev === 0) return null;
   const pct = ((current - prev) / prev) * 100;
   const up = pct > 0;
@@ -472,7 +467,7 @@ function DeltaBadge({ current, prev }) {
       {up ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}%
     </span>
   );
-}
+});
 
 export default function AnalyticsPage() {
   const [profiles, setProfiles] = useState([]);
@@ -485,12 +480,13 @@ export default function AnalyticsPage() {
 
   const active = profiles.find((p) => p.id === activeId);
 
-  const loadProfiles = useCallback(async () => {
+  const loadProfiles = useLatestRequest(async (signal) => {
     const { data } = await supabase
       .from("profiles")
       .select("*")
+      .abortSignal(signal)
       .order("created_at", { ascending: true });
-    if (!data) return;
+    if (signal.aborted || !data) return;
     setProfiles(data);
     const saved =
       typeof window !== "undefined"
@@ -500,25 +496,33 @@ export default function AnalyticsPage() {
       saved && data.find((p) => p.id === saved) ? saved : data[0]?.id;
     if (validId) setActiveId(validId);
     setLoading(false);
-  }, []);
+  });
 
   // Fetch with category join — no icon column
-  const loadExpenses = useCallback(async (profileId) => {
+  const loadExpenses = useLatestRequest(async (signal, profileId, selectedFilter, selectedDate) => {
+    const range = getPeriodRange(selectedFilter, selectedDate);
+    const previous = getPeriodRange(selectedFilter, shiftPeriod(selectedDate, selectedFilter, -1));
     if (!profileId) return;
     const { data } = await supabase
       .from("expenses")
-      .select("*, categories(id, name)")
+      .select("id, amount, reason, created_at, categories(id, name)")
+      .abortSignal(signal)
       .eq("profile_id", profileId)
+      .gte("created_at", previous.start.toISOString())
+      .lt("created_at", range.end.toISOString())
       .order("created_at", { ascending: true });
-    setExpenses(data || []);
-  }, []);
+    if (signal.aborted || !data) return;
+    setExpenses(data);
+  });
 
   useEffect(() => {
     loadProfiles();
   }, [loadProfiles]);
   useEffect(() => {
-    if (activeId) loadExpenses(activeId);
-  }, [activeId, loadExpenses]);
+    if (activeId) loadExpenses(activeId, filter, periodDate);
+  }, [activeId, filter, periodDate, loadExpenses]);
+
+  const refreshExpenses = useEventCallback(() => loadExpenses(activeId, filter, periodDate));
 
   useEffect(() => {
     if (!activeId) return;
@@ -532,13 +536,13 @@ export default function AnalyticsPage() {
           table: "expenses",
           filter: `profile_id=eq.${activeId}`,
         },
-        () => loadExpenses(activeId),
+        refreshExpenses,
       )
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
     };
-  }, [activeId, loadExpenses]);
+  }, [activeId, refreshExpenses]);
 
   function switchProfile(id) {
     setActiveId(id);
@@ -546,66 +550,68 @@ export default function AnalyticsPage() {
       localStorage.setItem("activeProfileId", id);
   }
 
-  const currentRange = getPeriodRange(filter, periodDate);
-  const filteredExpenses = expenses.filter((e) => {
-    const d = new Date(e.created_at);
-    return d >= currentRange.start && d < currentRange.end;
-  });
+  const { filteredExpenses, prevExpenses, chartData, cumulData, total, prevTotal, avg, maxSingle, topCategories, biggestExpense, busiest } = useMemo(() => {
+    const currentRange = getPeriodRange(filter, periodDate);
+    const filteredExpenses = expenses.filter((e) => {
+      const d = new Date(e.created_at);
+      return d >= currentRange.start && d < currentRange.end;
+    });
 
-  const previousRange = getPeriodRange(
-    filter,
-    shiftPeriod(periodDate, filter, -1),
-  );
-  const prevExpenses = expenses.filter((e) => {
-    const d = new Date(e.created_at);
-    return d >= previousRange.start && d < previousRange.end;
-  });
+    const previousRange = getPeriodRange(
+      filter,
+      shiftPeriod(periodDate, filter, -1),
+    );
+    const prevExpenses = expenses.filter((e) => {
+      const d = new Date(e.created_at);
+      return d >= previousRange.start && d < previousRange.end;
+    });
 
-  const chartData = buildChartData(expenses, filter, periodDate);
-  const cumulData = buildCumulativeData(filteredExpenses, filter, periodDate);
+    const chartData = buildChartData(expenses, filter, periodDate);
+    const cumulData = buildCumulativeData(filteredExpenses, filter, periodDate);
 
-  const total = filteredExpenses.reduce((s, e) => s + parseFloat(e.amount), 0);
-  const prevTotal = prevExpenses.reduce((s, e) => s + parseFloat(e.amount), 0);
-  const avg = filteredExpenses.length > 0 ? total / filteredExpenses.length : 0;
-  const maxSingle =
-    filteredExpenses.length > 0
-      ? Math.max(...filteredExpenses.map((e) => parseFloat(e.amount)))
-      : 0;
+    const total = filteredExpenses.reduce((s, e) => s + parseFloat(e.amount), 0);
+    const prevTotal = prevExpenses.reduce((s, e) => s + parseFloat(e.amount), 0);
+    const avg = filteredExpenses.length > 0 ? total / filteredExpenses.length : 0;
+    const maxSingle =
+      filteredExpenses.length > 0
+        ? filteredExpenses.reduce((max, e) => Math.max(max, parseFloat(e.amount)), 0)
+        : 0;
+
+    // Group by category name — uncategorized if no category
+    const categoryTotals = {};
+    filteredExpenses.forEach((e) => {
+      const cat = e.categories?.name || "uncategorized";
+      categoryTotals[cat] = (categoryTotals[cat] || 0) + parseFloat(e.amount);
+    });
+    const topCategories = Object.entries(categoryTotals)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+
+    // Biggest single expense
+    const biggestExpense =
+      filteredExpenses.length > 0
+        ? filteredExpenses.reduce(
+            (max, e) => (parseFloat(e.amount) > parseFloat(max.amount) ? e : max),
+            filteredExpenses[0],
+          )
+        : null;
+
+    // Most frequent day of week
+    const dayCounts = {};
+    filteredExpenses.forEach((e) => {
+      const d = fmtWeekday(e.created_at);
+      dayCounts[d] = (dayCounts[d] || 0) + 1;
+    });
+    const busiest = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0];
+
+    return { filteredExpenses, prevExpenses, chartData, cumulData, total, prevTotal, avg, maxSingle, topCategories, biggestExpense, busiest };
+  }, [expenses, filter, periodDate]);
 
   const daysInfo = getDaysInfo(filter, periodDate);
   const burnRate =
     daysInfo && daysInfo.elapsed > 0 ? total / daysInfo.elapsed : 0;
   const projected = daysInfo ? burnRate * daysInfo.total : 0;
   const balanceAfter = active ? active.balance - projected : null;
-
-  // Group by category name — uncategorized if no category
-  const categoryTotals = {};
-  filteredExpenses.forEach((e) => {
-    const cat = e.categories?.name || "uncategorized";
-    categoryTotals[cat] = (categoryTotals[cat] || 0) + parseFloat(e.amount);
-  });
-  const topCategories = Object.entries(categoryTotals)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
-
-  // Biggest single expense
-  const biggestExpense =
-    filteredExpenses.length > 0
-      ? filteredExpenses.reduce(
-          (max, e) => (parseFloat(e.amount) > parseFloat(max.amount) ? e : max),
-          filteredExpenses[0],
-        )
-      : null;
-
-  // Most frequent day of week
-  const dayCounts = {};
-  filteredExpenses.forEach((e) => {
-    const d = new Date(e.created_at).toLocaleDateString("en-US", {
-      weekday: "short",
-    });
-    dayCounts[d] = (dayCounts[d] || 0) + 1;
-  });
-  const busiest = Object.entries(dayCounts).sort((a, b) => b[1] - a[1])[0];
 
   const filters = ["day", "week", "month", "year"];
   const historicalPeriod = !isCurrentPeriod(periodDate, filter);

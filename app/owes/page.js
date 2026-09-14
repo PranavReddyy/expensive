@@ -1,15 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { fmt } from "../../lib/format";
+import { useLatestRequest } from "../../lib/useLatestRequest";
 import Nav from "../../components/Nav";
 import { supabase } from "../../lib/supabase";
-
-const fmt = (n) =>
-  "₹" +
-  Number(n || 0).toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 
 const emptyDebt = {
   person_id: "",
@@ -39,12 +34,13 @@ export default function OwesPage() {
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
 
-  const loadProfiles = useCallback(async () => {
+  const loadProfiles = useLatestRequest(async (signal) => {
     const { data } = await supabase
       .from("profiles")
       .select("*")
+      .abortSignal(signal)
       .order("created_at", { ascending: true });
-    if (!data) return;
+    if (signal.aborted || !data) return;
     setProfiles(data);
     const saved =
       typeof window !== "undefined"
@@ -56,27 +52,31 @@ export default function OwesPage() {
         : data[0]?.id;
     if (validId) setActiveId(validId);
     setLoading(false);
-  }, []);
+  });
 
-  const loadPeople = useCallback(async (profileId) => {
+  const loadPeople = useLatestRequest(async (signal, profileId) => {
     if (!profileId) return;
     const { data } = await supabase
       .from("people")
       .select("*")
+      .abortSignal(signal)
       .eq("profile_id", profileId)
       .order("name", { ascending: true });
-    setPeople(data || []);
-  }, []);
+    if (signal.aborted || !data) return;
+    setPeople(data);
+  });
 
-  const loadDebts = useCallback(async (profileId) => {
+  const loadDebts = useLatestRequest(async (signal, profileId) => {
     if (!profileId) return;
     const { data } = await supabase
       .from("debts")
       .select("*, people(id, name)")
+      .abortSignal(signal)
       .eq("profile_id", profileId)
       .order("created_at", { ascending: false });
-    setDebts(data || []);
-  }, []);
+    if (signal.aborted || !data) return;
+    setDebts(data);
+  });
 
   useEffect(() => {
     loadProfiles();
@@ -118,40 +118,41 @@ export default function OwesPage() {
     return () => supabase.removeChannel(channel);
   }, [activeId, loadDebts, loadPeople]);
 
-  const openDebts = debts.filter((debt) => Number(debt.remaining_amount) > 0);
-  const settledDebts = debts.filter(
-    (debt) => Number(debt.remaining_amount) === 0,
-  );
-  const owedToYou = openDebts
-    .filter((debt) => debt.direction === "they_owe_me")
-    .reduce((sum, debt) => sum + Number(debt.remaining_amount), 0);
-  const youOwe = openDebts
-    .filter((debt) => debt.direction === "i_owe_them")
-    .reduce((sum, debt) => sum + Number(debt.remaining_amount), 0);
+  const { openDebts, settledDebts, owedToYou, youOwe, balances } = useMemo(() => {
+    const openDebts = [];
+    const settledDebts = [];
+    const balances = new Map();
+    let owedToYou = 0;
+    let youOwe = 0;
+    for (const debt of debts) {
+      const amount = Number(debt.remaining_amount);
+      if (amount === 0) settledDebts.push(debt);
+      if (amount <= 0 || !Number.isFinite(amount)) continue;
+      openDebts.push(debt);
+      const balance = balances.get(debt.person_id) || { theyOwe: 0, iOwe: 0 };
+      if (debt.direction === "they_owe_me") {
+        owedToYou += amount;
+        balance.theyOwe += amount;
+      } else if (debt.direction === "i_owe_them") {
+        youOwe += amount;
+        balance.iOwe += amount;
+      }
+      balances.set(debt.person_id, balance);
+    }
+    return { openDebts, settledDebts, owedToYou, youOwe, balances };
+  }, [debts]);
 
-  const personBalances = useMemo(
-    () =>
-      people.map((person) => {
-        const personDebts = openDebts.filter(
-          (debt) => debt.person_id === person.id,
-        );
-        const theyOwe = personDebts
-          .filter((debt) => debt.direction === "they_owe_me")
-          .reduce((sum, debt) => sum + Number(debt.remaining_amount), 0);
-        const iOwe = personDebts
-          .filter((debt) => debt.direction === "i_owe_them")
-          .reduce((sum, debt) => sum + Number(debt.remaining_amount), 0);
-        return { person, theyOwe, iOwe, net: theyOwe - iOwe };
-      }),
-    [openDebts, people],
-  );
+  const personBalances = useMemo(() => people.map((person) => {
+    const { theyOwe = 0, iOwe = 0 } = balances.get(person.id) || {};
+    return { person, theyOwe, iOwe, net: theyOwe - iOwe };
+  }), [balances, people]);
 
   function switchProfile(id) {
     setActiveId(id);
     localStorage.setItem("activeProfileId", id);
   }
 
-  function openModal(type, debt = null) {
+  const openModal = useCallback((type, debt = null) => {
     setErr("");
     if (type === "person") setPersonName("");
     if (type === "debt") setDebtForm(emptyDebt);
@@ -169,7 +170,7 @@ export default function OwesPage() {
       setPaymentAmount(String(debt.remaining_amount));
     }
     setModal(type);
-  }
+  }, []);
 
   function closeModal() {
     if (submitting) return;
@@ -305,6 +306,71 @@ export default function OwesPage() {
     loadDebts(activeId);
   }
 
+  const debtRows = useMemo(() => openDebts.map((debt) => {
+                    const theyOwe = debt.direction === "they_owe_me";
+                    const paid =
+                      Number(debt.amount) - Number(debt.remaining_amount);
+                    return (
+                      <article key={debt.id} style={s.debtRow}>
+                        <div style={s.debtMain}>
+                          <p style={s.personName}>
+                            {debt.people?.name || "unknown"}
+                          </p>
+                          <p style={s.description}>{debt.description}</p>
+                          <p style={s.direction}>
+                            {theyOwe ? "they owe you" : "you owe them"}
+                            {paid > 0 && ` · ${fmt(paid)} paid`}
+                          </p>
+                        </div>
+                        <div style={s.debtSide}>
+                          <p style={s.amount}>{fmt(debt.remaining_amount)}</p>
+                          <button
+                            style={s.settleBtn}
+                            onClick={() => openModal("payment", debt)}
+                          >
+                            payment
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  }), [openDebts, openModal]);
+
+  const personRows = useMemo(() => personBalances.map(
+                    ({ person, theyOwe, iOwe, net }, index) => {
+                      const personStatus =
+                        net > 0
+                          ? `collect ${fmt(net)}`
+                          : net < 0
+                            ? `pay ${fmt(Math.abs(net))}`
+                            : "settled";
+                      return (
+                        <div
+                          key={person.id}
+                          style={{
+                            ...s.personRow,
+                            ...(index === personBalances.length - 1
+                              ? s.lastRow
+                              : {}),
+                          }}
+                        >
+                          <div style={s.personMain}>
+                            <p style={s.personName}>{person.name}</p>
+                            <p style={s.personDetail}>
+                              {theyOwe > 0 && iOwe > 0
+                                ? `they owe ${fmt(theyOwe)} · you owe ${fmt(iOwe)}`
+                                : net === 0
+                                  ? "no open amount"
+                                  : net > 0
+                                    ? "they owe you"
+                                    : "you owe them"}
+                            </p>
+                          </div>
+                          <span style={s.personStatus}>{personStatus}</span>
+                        </div>
+                      );
+                    },
+                  ), [personBalances]);
+
   if (loading) {
     return <div style={s.center}>loading...</div>;
   }
@@ -378,34 +444,7 @@ export default function OwesPage() {
                   <p style={s.sectionLabel}>open amounts</p>
                 </div>
                 <div style={s.list}>
-                  {openDebts.map((debt) => {
-                    const theyOwe = debt.direction === "they_owe_me";
-                    const paid =
-                      Number(debt.amount) - Number(debt.remaining_amount);
-                    return (
-                      <article key={debt.id} style={s.debtRow}>
-                        <div style={s.debtMain}>
-                          <p style={s.personName}>
-                            {debt.people?.name || "unknown"}
-                          </p>
-                          <p style={s.description}>{debt.description}</p>
-                          <p style={s.direction}>
-                            {theyOwe ? "they owe you" : "you owe them"}
-                            {paid > 0 && ` · ${fmt(paid)} paid`}
-                          </p>
-                        </div>
-                        <div style={s.debtSide}>
-                          <p style={s.amount}>{fmt(debt.remaining_amount)}</p>
-                          <button
-                            style={s.settleBtn}
-                            onClick={() => openModal("payment", debt)}
-                          >
-                            payment
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
+                  {debtRows}
                 </div>
               </section>
             ) : (
@@ -418,41 +457,7 @@ export default function OwesPage() {
                   <p style={s.sectionLabel}>people</p>
                 </div>
                 <div style={s.list}>
-                  {personBalances.map(
-                    ({ person, theyOwe, iOwe, net }, index) => {
-                      const personStatus =
-                        net > 0
-                          ? `collect ${fmt(net)}`
-                          : net < 0
-                            ? `pay ${fmt(Math.abs(net))}`
-                            : "settled";
-                      return (
-                        <div
-                          key={person.id}
-                          style={{
-                            ...s.personRow,
-                            ...(index === personBalances.length - 1
-                              ? s.lastRow
-                              : {}),
-                          }}
-                        >
-                          <div style={s.personMain}>
-                            <p style={s.personName}>{person.name}</p>
-                            <p style={s.personDetail}>
-                              {theyOwe > 0 && iOwe > 0
-                                ? `they owe ${fmt(theyOwe)} · you owe ${fmt(iOwe)}`
-                                : net === 0
-                                  ? "no open amount"
-                                  : net > 0
-                                    ? "they owe you"
-                                    : "you owe them"}
-                            </p>
-                          </div>
-                          <span style={s.personStatus}>{personStatus}</span>
-                        </div>
-                      );
-                    },
-                  )}
+                  {personRows}
                 </div>
               </section>
             )}

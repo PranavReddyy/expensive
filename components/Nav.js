@@ -1,22 +1,32 @@
 'use client'
+import { memo, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 
-export default function Nav() {
-  const pathname = usePathname()
-  const router = useRouter()
-
-  async function handleLogout() {
-    await fetch('/api/auth/logout', { method: 'POST' })
-    router.push('/')
-  }
-
-  const links = [
+const links = [
     { href: '/dashboard', label: 'HOME' },
     { href: '/expenses', label: 'EXPENSES' },
     { href: '/analytics', label: 'ANALYTICS' },
     { href: '/owes', label: 'OWES' },
   ]
+
+const Nav = memo(function Nav() {
+  const pathname = usePathname()
+  const router = useRouter()
+  const loggingOut = useRef(false)
+
+  async function handleLogout() {
+    if (loggingOut.current) return
+    loggingOut.current = true
+    try {
+      const response = await fetch('/api/auth/logout', { method: 'POST' })
+      if (response.ok) router.replace('/')
+    } finally {
+      loggingOut.current = false
+    }
+  }
+
+
 
   return (
     <nav style={s.nav}>
@@ -37,7 +47,9 @@ export default function Nav() {
       </button>
     </nav>
   )
-}
+});
+
+export default Nav
 
 const s = {
   nav: {

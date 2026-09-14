@@ -62,54 +62,8 @@
   window.addEventListener("gesturechange", blockEvent, { passive: false });
   window.addEventListener("gestureend", blockEvent, { passive: false });
 
-  // Prevent double-tap to zoom
-  var lastTouchEnd = 0;
-  window.addEventListener(
-    "touchend",
-    function (e) {
-      var now = Date.now();
-      if (now - lastTouchEnd <= 300) return blockEvent(e);
-      lastTouchEnd = now;
-    },
-    { passive: false },
-  );
-
-  // Prevent multi-touch/pinch via touchstart/touchmove
-  window.addEventListener(
-    "touchstart",
-    function (e) {
-      if (e.touches && e.touches.length > 1) return blockEvent(e);
-    },
-    { passive: false },
-  );
-  window.addEventListener(
-    "touchmove",
-    function (e) {
-      if (e.touches && e.touches.length > 1) return blockEvent(e);
-    },
-    { passive: false },
-  );
-
-  // Prevent multi-touch/pinch by tracking pointer count as a fallback
-  var pointerCount = 0;
-  window.addEventListener(
-    "pointerdown",
-    function (e) {
-      if (e.pointerType === "touch") {
-        pointerCount++;
-        if (pointerCount > 1) return blockEvent(e);
-      }
-    },
-    { passive: false },
-  );
-  window.addEventListener(
-    "pointerup",
-    function (e) {
-      if (e.pointerType === "touch")
-        pointerCount = Math.max(0, pointerCount - 1);
-    },
-    { passive: false },
-  );
+  // CSS touch-action and the viewport handle touch zoom without blocking the
+  // scrolling thread or swallowing a second rapid tap on an interactive control.
 
   // Best-effort: set touch-action to manipulation on root element
   try {

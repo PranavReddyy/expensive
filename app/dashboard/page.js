@@ -1,14 +1,9 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { fmt, fmtExpenseDate } from "../../lib/format";
+import { useLatestRequest } from "../../lib/useLatestRequest";
 import Nav from "../../components/Nav";
 import { supabase } from "../../lib/supabase";
-
-const fmt = (n) =>
-  "₹" +
-  Number(n || 0).toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 
 function getNowLocal() {
   const now = new Date();
@@ -43,21 +38,24 @@ export default function Dashboard() {
 
   // ─── Data loading ────────────────────────────────────────────
 
-  const loadCategories = useCallback(async () => {
+  const loadCategories = useLatestRequest(async (signal) => {
     const { data } = await supabase
       .from("categories")
       .select("*")
+      .abortSignal(signal)
       .order("sort_order", { ascending: true });
-    setCategories(data || []);
-  }, []);
+    if (signal.aborted || !data) return;
+    setCategories(data);
+  });
 
-  const loadProfiles = useCallback(async () => {
+  const loadProfiles = useLatestRequest(async (signal) => {
     const { data } = await supabase
       .from("profiles")
       .select("*")
+      .abortSignal(signal)
       .order("created_at", { ascending: true });
 
-    if (!data) return;
+    if (signal.aborted || !data) return;
     setProfiles(data);
 
     const saved =
@@ -72,29 +70,33 @@ export default function Dashboard() {
         localStorage.setItem("activeProfileId", validId);
     }
     setLoading(false);
-  }, []);
+  });
 
   // No icon column in schema — select only id and name
-  const loadExpenses = useCallback(async (profileId) => {
+  const loadExpenses = useLatestRequest(async (signal, profileId) => {
     if (!profileId) return;
     const { data } = await supabase
       .from("expenses")
       .select("*, categories(id, name)")
+      .abortSignal(signal)
       .eq("profile_id", profileId)
       .order("created_at", { ascending: false })
       .limit(6);
-    setExpenses(data || []);
-  }, []);
+    if (signal.aborted || !data) return;
+    setExpenses(data);
+  });
 
-  const loadTotalSpent = useCallback(async (profileId) => {
+  const loadTotalSpent = useLatestRequest(async (signal, profileId) => {
     if (!profileId) return;
     const { data } = await supabase
       .from("expenses")
       .select("amount")
+      .abortSignal(signal)
       .eq("profile_id", profileId);
-    const total = (data || []).reduce((s, e) => s + parseFloat(e.amount), 0);
+    if (signal.aborted || !data) return;
+    const total = data.reduce((s, e) => s + parseFloat(e.amount), 0);
     setTotalSpent(total);
-  }, []);
+  });
 
   // Add at the top of the component
   const firstInputRef = useRef(null);
@@ -296,6 +298,31 @@ export default function Dashboard() {
 
   // ─── Render ──────────────────────────────────────────────────
 
+  const expenseRows = useMemo(() => expenses.map((e) => (
+                <div key={e.id} style={s.expRow}>
+                  <div style={s.expLeft}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        marginBottom: "2px",
+                      }}
+                    >
+                      <p style={s.expReason}>{e.reason}</p>
+                      {e.categories && (
+                        <span style={s.catTag}>{e.categories.name}</span>
+                      )}
+                    </div>
+                    {e.notes && <p style={s.expNotes}>{e.notes}</p>}
+                    <p style={s.expDate}>
+                      {fmtExpenseDate(e.created_at)}
+                    </p>
+                  </div>
+                  <p style={s.expAmount}>{fmt(e.amount)}</p>
+                </div>
+              )), [expenses]);
+
   if (loading) {
     return (
       <div style={s.center}>
@@ -383,35 +410,7 @@ export default function Dashboard() {
           <div style={s.section}>
             <p style={s.sectionLabel}>recent</p>
             <div style={s.list}>
-              {expenses.map((e) => (
-                <div key={e.id} style={s.expRow}>
-                  <div style={s.expLeft}>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        marginBottom: "2px",
-                      }}
-                    >
-                      <p style={s.expReason}>{e.reason}</p>
-                      {e.categories && (
-                        <span style={s.catTag}>{e.categories.name}</span>
-                      )}
-                    </div>
-                    {e.notes && <p style={s.expNotes}>{e.notes}</p>}
-                    <p style={s.expDate}>
-                      {new Date(e.created_at).toLocaleString("en-IN", {
-                        day: "2-digit",
-                        month: "short",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </p>
-                  </div>
-                  <p style={s.expAmount}>{fmt(e.amount)}</p>
-                </div>
-              ))}
+              {expenseRows}
             </div>
           </div>
         )}

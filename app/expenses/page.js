@@ -1,14 +1,9 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { fmt, fmtFullExpenseDate } from "../../lib/format";
+import { useLatestRequest, useEventCallback } from "../../lib/useLatestRequest";
 import Nav from "../../components/Nav";
 import { supabase } from "../../lib/supabase";
-
-const fmt = (n) =>
-  "₹" +
-  Number(n || 0).toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
 
 function getPeriodRange(filter, periodDate = new Date()) {
   if (filter === "all") return null;
@@ -88,34 +83,40 @@ export default function ExpensesPage() {
   const [tErr, setTErr] = useState("");
 
   const active = profiles.find((p) => p.id === activeId);
-  const otherProfiles = profiles.filter((p) => p.id !== activeId);
+  const otherProfiles = useMemo(() => profiles.filter((p) => p.id !== activeId), [profiles, activeId]);
 
-  const visibleExpenses =
-    categoryFilter === "all"
-      ? expenses
-      : expenses.filter((e) => e.category_id === categoryFilter);
-
-  const totalFiltered = visibleExpenses.reduce(
-    (s, e) => s + parseFloat(e.amount),
-    0,
+  const visibleExpenses = useMemo(() =>
+    categoryFilter === "all" ? expenses : expenses.filter((e) => e.category_id === categoryFilter),
+    [expenses, categoryFilter],
   );
+  const totalFiltered = useMemo(() =>
+    visibleExpenses.reduce((sum, e) => sum + parseFloat(e.amount), 0),
+    [visibleExpenses],
+  );
+  const activeCategories = useMemo(() => {
+    const ids = new Set(expenses.map((e) => e.category_id));
+    return categories.filter((category) => ids.has(category.id));
+  }, [categories, expenses]);
 
   // ─── Data loading ────────────────────────────────────────────
 
-  const loadCategories = useCallback(async () => {
+  const loadCategories = useLatestRequest(async (signal) => {
     const { data } = await supabase
       .from("categories")
       .select("*")
+      .abortSignal(signal)
       .order("sort_order", { ascending: true });
-    setCategories(data || []);
-  }, []);
+    if (signal.aborted || !data) return;
+    setCategories(data);
+  });
 
-  const loadProfiles = useCallback(async () => {
+  const loadProfiles = useLatestRequest(async (signal) => {
     const { data } = await supabase
       .from("profiles")
       .select("*")
+      .abortSignal(signal)
       .order("created_at", { ascending: true });
-    if (!data) return;
+    if (signal.aborted || !data) return;
     setProfiles(data);
     const saved =
       typeof window !== "undefined"
@@ -125,15 +126,16 @@ export default function ExpensesPage() {
       saved && data.find((p) => p.id === saved) ? saved : data[0]?.id;
     if (validId) setActiveId(validId);
     setLoading(false);
-  }, []);
+  });
 
   // No icon column — select only id and name from categories
-  const loadExpenses = useCallback(async (profileId, f, selectedDate) => {
+  const loadExpenses = useLatestRequest(async (signal, profileId, f, selectedDate) => {
     if (!profileId) return;
     const range = getPeriodRange(f, selectedDate);
     let q = supabase
       .from("expenses")
       .select("*, categories(id, name)")
+      .abortSignal(signal)
       .eq("profile_id", profileId)
       .order("created_at", { ascending: false });
     if (range) {
@@ -142,8 +144,9 @@ export default function ExpensesPage() {
         .lt("created_at", range.end.toISOString());
     }
     const { data } = await q;
-    setExpenses(data || []);
-  }, []);
+    if (signal.aborted || !data) return;
+    setExpenses(data);
+  });
 
   useEffect(() => {
     loadCategories();
@@ -155,6 +158,8 @@ export default function ExpensesPage() {
   }, [activeId, filter, periodDate, loadExpenses]);
 
   // Realtime
+  const refreshExpenses = useEventCallback(() => loadExpenses(activeId, filter, periodDate));
+
   useEffect(() => {
     if (!activeId) return;
     const ch = supabase
@@ -167,13 +172,13 @@ export default function ExpensesPage() {
           table: "expenses",
           filter: `profile_id=eq.${activeId}`,
         },
-        () => loadExpenses(activeId, filter, periodDate),
+        refreshExpenses,
       )
       .subscribe();
     return () => {
       supabase.removeChannel(ch);
     };
-  }, [activeId, filter, periodDate, loadExpenses]);
+  }, [activeId, refreshExpenses]);
 
   useEffect(() => {
     const ch = supabase
@@ -265,7 +270,7 @@ export default function ExpensesPage() {
     loadExpenses(activeId, filter, periodDate);
   }
 
-  async function deleteExpense(exp) {
+  const deleteExpense = useCallback(async (exp) => {
     if (!confirm(`delete "${exp.reason}"?`)) return;
     await supabase
       .from("profiles")
@@ -274,7 +279,7 @@ export default function ExpensesPage() {
     await supabase.from("expenses").delete().eq("id", exp.id);
     loadProfiles();
     loadExpenses(activeId, filter, periodDate);
-  }
+  }, [active, activeId, filter, periodDate, loadProfiles, loadExpenses]);
 
   const timeFilters = ["day", "week", "month", "year", "all"];
 
@@ -289,6 +294,62 @@ export default function ExpensesPage() {
     setCategoryFilter("all");
   }
 
+  const expenseRows = useMemo(() => visibleExpenses.map((e, i) => (
+              <div
+                key={e.id}
+                style={{
+                  ...s.row,
+                  ...(i === visibleExpenses.length - 1
+                    ? { borderBottom: "none" }
+                    : {}),
+                }}
+              >
+                <div style={s.rowMain}>
+                  <div style={s.rowLeft}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "6px",
+                        flexWrap: "wrap",
+                        marginBottom: "2px",
+                      }}
+                    >
+                      <p style={s.reason}>{e.reason}</p>
+                      {e.categories && (
+                        <span style={s.catTag}>{e.categories.name}</span>
+                      )}
+                    </div>
+                    {e.notes && <p style={s.notes}>{e.notes}</p>}
+                    <p style={s.date}>
+                      {fmtFullExpenseDate(e.created_at)}
+                    </p>
+                  </div>
+                  <p style={s.amount}>{fmt(e.amount)}</p>
+                </div>
+                <div style={s.rowActions}>
+                  {otherProfiles.length > 0 && (
+                    <button
+                      style={s.actionBtn}
+                      onClick={() => {
+                        setTransferExpense(e);
+                        setTransferTargetId("");
+                        setTErr("");
+                      }}
+                    >
+                      transfer
+                    </button>
+                  )}
+                  <button
+                    style={{ ...s.actionBtn, color: "var(--muted)" }}
+                    onClick={() => deleteExpense(e)}
+                  >
+                    delete
+                  </button>
+                </div>
+              </div>
+            )), [visibleExpenses, otherProfiles, deleteExpense]);
+
   if (loading) {
     return (
       <div style={s.center}>
@@ -296,11 +357,6 @@ export default function ExpensesPage() {
       </div>
     );
   }
-
-  // Categories that actually appear in the current expense list
-  const activeCategories = categories.filter((c) =>
-    expenses.some((e) => e.category_id === c.id),
-  );
 
   return (
     <div style={s.page}>
@@ -411,67 +467,7 @@ export default function ExpensesPage() {
         {/* Expense list */}
         {visibleExpenses.length > 0 ? (
           <div style={s.list}>
-            {visibleExpenses.map((e, i) => (
-              <div
-                key={e.id}
-                style={{
-                  ...s.row,
-                  ...(i === visibleExpenses.length - 1
-                    ? { borderBottom: "none" }
-                    : {}),
-                }}
-              >
-                <div style={s.rowMain}>
-                  <div style={s.rowLeft}>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        flexWrap: "wrap",
-                        marginBottom: "2px",
-                      }}
-                    >
-                      <p style={s.reason}>{e.reason}</p>
-                      {e.categories && (
-                        <span style={s.catTag}>{e.categories.name}</span>
-                      )}
-                    </div>
-                    {e.notes && <p style={s.notes}>{e.notes}</p>}
-                    <p style={s.date}>
-                      {new Date(e.created_at).toLocaleString("en-IN", {
-                        day: "2-digit",
-                        month: "short",
-                        year: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </p>
-                  </div>
-                  <p style={s.amount}>{fmt(e.amount)}</p>
-                </div>
-                <div style={s.rowActions}>
-                  {otherProfiles.length > 0 && (
-                    <button
-                      style={s.actionBtn}
-                      onClick={() => {
-                        setTransferExpense(e);
-                        setTransferTargetId("");
-                        setTErr("");
-                      }}
-                    >
-                      transfer
-                    </button>
-                  )}
-                  <button
-                    style={{ ...s.actionBtn, color: "var(--muted)" }}
-                    onClick={() => deleteExpense(e)}
-                  >
-                    delete
-                  </button>
-                </div>
-              </div>
-            ))}
+            {expenseRows}
           </div>
         ) : (
           <p style={s.empty}>no expenses for this period.</p>
