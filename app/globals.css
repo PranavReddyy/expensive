@@ -105,7 +105,7 @@ input[type="checkbox"] { -webkit-appearance: auto; appearance: auto; }
   flex-direction: column;
 }
 .home-page > div:first-child > * { flex-shrink: 0; }
-.home-header-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.home-header-actions { display: flex; flex-direction: row; align-items: flex-end; gap: 6px; }
 .home-page .home-recent {
   display: flex;
   flex-direction: column;

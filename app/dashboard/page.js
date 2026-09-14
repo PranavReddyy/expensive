@@ -18,12 +18,16 @@ function getNowLocal() {
 }
 
 export default function Dashboard() {
-  const { profiles, activeId, switchProfile, loading, dataError } = useProfiles();
+  const { profiles, activeId, switchProfile, loading, dataError } =
+    useProfiles();
 
   const categories = useCategories();
   const { data: expenses } = useExpenses(activeId, { limit: 6 });
   const { data: amounts } = useExpenses(activeId, { amountsOnly: true });
-  const totalSpent = useMemo(() => amounts.reduce((sum, expense) => sum + Number(expense.amount), 0), [amounts]);
+  const totalSpent = useMemo(
+    () => amounts.reduce((sum, expense) => sum + Number(expense.amount), 0),
+    [amounts],
+  );
 
   const [modal, setModal] = useState(null); // 'add' | 'balance' | 'profile'
 
@@ -125,7 +129,11 @@ export default function Dashboard() {
     }
     setSubmitting(true);
     const bal = Number(profileForm.balance || 0);
-    if (!Number.isFinite(bal)) { setErr("enter a valid balance"); setSubmitting(false); return; }
+    if (!Number.isFinite(bal)) {
+      setErr("enter a valid balance");
+      setSubmitting(false);
+      return;
+    }
     const { data, error } = await supabase
       .from("profiles")
       .insert({ name: profileForm.name.trim(), balance: bal })
@@ -158,41 +166,48 @@ export default function Dashboard() {
 
   // ─── Render ──────────────────────────────────────────────────
 
-  const expenseRows = useMemo(() => expenses.map((e) => (
-                <div key={e.id} style={s.expRow}>
-                  <div style={s.expLeft}>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "6px",
-                        marginBottom: "2px",
-                      }}
-                    >
-                      <p style={s.expReason}>{e.reason}</p>
-                      {e.categories && (
-                        <span style={s.catTag}>{e.categories.name}</span>
-                      )}
-                    </div>
-                    {e.notes && <p style={s.expNotes}>{e.notes}</p>}
-                    <p style={s.expDate}>
-                      {fmtExpenseDate(e.created_at)}
-                    </p>
-                  </div>
-                  <p style={s.expAmount}>{fmt(e.amount)}</p>
-                </div>
-              )), [expenses]);
+  const expenseRows = useMemo(
+    () =>
+      expenses.map((e) => (
+        <div key={e.id} style={s.expRow}>
+          <div style={s.expLeft}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                marginBottom: "2px",
+              }}
+            >
+              <p style={s.expReason}>{e.reason}</p>
+              {e.categories && (
+                <span style={s.catTag}>{e.categories.name}</span>
+              )}
+            </div>
+            {e.notes && <p style={s.expNotes}>{e.notes}</p>}
+            <p style={s.expDate}>{fmtExpenseDate(e.created_at)}</p>
+          </div>
+          <p style={s.expAmount}>{fmt(e.amount)}</p>
+        </div>
+      )),
+    [expenses],
+  );
 
-  if (loading || (dataError && !profiles.length)) return <DataStatus error={dataError} />;
+  if (loading || (dataError && !profiles.length))
+    return <DataStatus error={dataError} />;
 
   return (
     <div className="home-page" style={s.page}>
       <div style={s.wrap}>
         {/* Header */}
         <div style={s.header}>
-          <span style={s.logo}>EXPENSIVE</span>
+          <span style={s.logo}>EXPENS***</span>
           <div className="home-header-actions">
-            <button type="button" style={s.smallBtn} onClick={() => openModal("profile")}>
+            <button
+              type="button"
+              style={s.smallBtn}
+              onClick={() => openModal("profile")}
+            >
               + profile
             </button>
             <LogoutButton style={s.smallBtn} />
@@ -203,7 +218,8 @@ export default function Dashboard() {
         {profiles.length > 0 && (
           <div style={s.tabs}>
             {profiles.map((p) => (
-              <button type="button"
+              <button
+                type="button"
                 key={p.id}
                 style={{ ...s.tab, ...(p.id === activeId ? s.tabActive : {}) }}
                 onClick={() => switchProfile(p.id)}
@@ -217,7 +233,11 @@ export default function Dashboard() {
         {profiles.length === 0 && (
           <div style={s.empty}>
             <p>no profiles yet.</p>
-            <button type="button" style={s.btn} onClick={() => openModal("profile")}>
+            <button
+              type="button"
+              style={s.btn}
+              onClick={() => openModal("profile")}
+            >
               create first profile
             </button>
           </div>
@@ -238,7 +258,11 @@ export default function Dashboard() {
                   {fmt(active.balance)}
                 </p>
               </div>
-              <button type="button" style={s.editBtn} onClick={() => openModal("balance")}>
+              <button
+                type="button"
+                style={s.editBtn}
+                onClick={() => openModal("balance")}
+              >
                 edit
               </button>
             </div>
@@ -257,7 +281,11 @@ export default function Dashboard() {
         )}
 
         {active && (
-          <button type="button" style={s.addBtn} onClick={() => openModal("add")}>
+          <button
+            type="button"
+            style={s.addBtn}
+            onClick={() => openModal("add")}
+          >
             + log expense
           </button>
         )}
@@ -267,7 +295,9 @@ export default function Dashboard() {
           <div className="home-recent" style={s.section}>
             <p style={s.sectionLabel}>recent</p>
             <RecentExpenses style={s.list}>{expenseRows}</RecentExpenses>
-            <Link href="/expenses" className="home-view-all">all expenses →</Link>
+            <Link href="/expenses" className="home-view-all">
+              all expenses →
+            </Link>
           </div>
         )}
 
@@ -278,187 +308,222 @@ export default function Dashboard() {
 
       {/* ── Modals ── */}
       {modal && (
-        <Modal title={modal === "add" ? "log expense" : modal === "balance" ? "edit balance" : "new profile"}
-          style={s.modal} overlayStyle={s.overlay} busy={submitting}
+        <Modal
+          title={
+            modal === "add"
+              ? "log expense"
+              : modal === "balance"
+                ? "edit balance"
+                : "new profile"
+          }
+          style={s.modal}
+          overlayStyle={s.overlay}
+          busy={submitting}
           onClose={() => setModal(null)}
-          onSubmit={modal === "add" ? addExpense : modal === "balance" ? updateBalance : createProfile}
-          onError={(error) => { setErr(error.message || "could not save"); setSubmitting(false); }}>
-            {/* Add Expense Modal */}
-            {modal === "add" && (
-              <>
-                <p style={s.modalTitle}>log expense</p>
-                <div style={s.mField}>
-                  <label htmlFor="expense-reason" style={s.mLabel}>reason *</label>
-                  <input
-                    style={s.mInput}
-                    id="expense-reason"
-                    value={form.reason}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, reason: e.target.value }))
-                    }
-                    placeholder="e.g. groceries"
-                  />
-                </div>
-                <div style={s.mField}>
-                  <label htmlFor="expense-amount" style={s.mLabel}>amount (₹) *</label>
-                  <input
-                    style={s.mInput}
-                    type="text"
-                    inputMode="decimal"
-                    id="expense-amount"
-                    value={form.amount}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, amount: e.target.value }))
-                    }
-                    placeholder="0.00"
-                  />
-                </div>
+          onSubmit={
+            modal === "add"
+              ? addExpense
+              : modal === "balance"
+                ? updateBalance
+                : createProfile
+          }
+          onError={(error) => {
+            setErr(error.message || "could not save");
+            setSubmitting(false);
+          }}
+        >
+          {/* Add Expense Modal */}
+          {modal === "add" && (
+            <>
+              <p style={s.modalTitle}>log expense</p>
+              <div style={s.mField}>
+                <label htmlFor="expense-reason" style={s.mLabel}>
+                  reason *
+                </label>
+                <input
+                  style={s.mInput}
+                  id="expense-reason"
+                  value={form.reason}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, reason: e.target.value }))
+                  }
+                  placeholder="e.g. groceries"
+                />
+              </div>
+              <div style={s.mField}>
+                <label htmlFor="expense-amount" style={s.mLabel}>
+                  amount (₹) *
+                </label>
+                <input
+                  style={s.mInput}
+                  type="text"
+                  inputMode="decimal"
+                  id="expense-amount"
+                  value={form.amount}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, amount: e.target.value }))
+                  }
+                  placeholder="0.00"
+                />
+              </div>
 
-                <div style={s.mField}>
-                  <label htmlFor="expense-datetime" style={s.mLabel}>date & time</label>
-                  <input
-                    style={s.mInput}
-                    type="datetime-local"
-                    id="expense-datetime"
-                    value={form.datetime}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, datetime: e.target.value }))
-                    }
-                  />
-                </div>
+              <div style={s.mField}>
+                <label htmlFor="expense-datetime" style={s.mLabel}>
+                  date & time
+                </label>
+                <input
+                  style={s.mInput}
+                  type="datetime-local"
+                  id="expense-datetime"
+                  value={form.datetime}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, datetime: e.target.value }))
+                  }
+                />
+              </div>
 
-                {/* Category picker — name only, no icon */}
-                {categories.length > 0 && (
-                  <div style={s.mField}>
-                    <label style={s.mLabel}>category</label>
-                    <div style={s.catGrid}>
-                      {categories.map((c) => (
-                        <button type="button"
-                          key={c.id}
-                          style={{
-                            ...s.catBtn,
-                            ...(form.category_id === c.id
-                              ? s.catBtnActive
-                              : {}),
-                          }}
-                          onClick={() =>
-                            setForm((f) => ({
-                              ...f,
-                              category_id: f.category_id === c.id ? "" : c.id,
-                            }))
-                          }
-                        >
-                          <span style={{ fontSize: "11px" }}>{c.name}</span>
-                        </button>
-                      ))}
-                    </div>
+              {/* Category picker — name only, no icon */}
+              {categories.length > 0 && (
+                <div style={s.mField}>
+                  <label style={s.mLabel}>category</label>
+                  <div style={s.catGrid}>
+                    {categories.map((c) => (
+                      <button
+                        type="button"
+                        key={c.id}
+                        style={{
+                          ...s.catBtn,
+                          ...(form.category_id === c.id ? s.catBtnActive : {}),
+                        }}
+                        onClick={() =>
+                          setForm((f) => ({
+                            ...f,
+                            category_id: f.category_id === c.id ? "" : c.id,
+                          }))
+                        }
+                      >
+                        <span style={{ fontSize: "11px" }}>{c.name}</span>
+                      </button>
+                    ))}
                   </div>
-                )}
+                </div>
+              )}
 
-                <div style={s.mField}>
-                  <label htmlFor="expense-notes" style={s.mLabel}>notes</label>
-                  <textarea
-                    style={{ ...s.mInput, height: "60px", resize: "none" }}
-                    id="expense-notes"
-                    value={form.notes}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, notes: e.target.value }))
-                    }
-                    placeholder="optional"
-                  />
-                </div>
-                {err && <p style={s.mErr}>// {err}</p>}
-                <div style={s.mBtns}>
-                  <button type="button" disabled={submitting} style={s.mCancel} onClick={() => setModal(null)}>
-                    cancel
-                  </button>
-                  <button
-                    style={s.mConfirm}
-                    type="submit"
-                    disabled={submitting}
-                  >
-                    {submitting ? "saving..." : "save"}
-                  </button>
-                </div>
-              </>
-            )}
+              <div style={s.mField}>
+                <label htmlFor="expense-notes" style={s.mLabel}>
+                  notes
+                </label>
+                <textarea
+                  style={{ ...s.mInput, height: "60px", resize: "none" }}
+                  id="expense-notes"
+                  value={form.notes}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, notes: e.target.value }))
+                  }
+                  placeholder="optional"
+                />
+              </div>
+              {err && <p style={s.mErr}>// {err}</p>}
+              <div style={s.mBtns}>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  style={s.mCancel}
+                  onClick={() => setModal(null)}
+                >
+                  cancel
+                </button>
+                <button style={s.mConfirm} type="submit" disabled={submitting}>
+                  {submitting ? "saving..." : "save"}
+                </button>
+              </div>
+            </>
+          )}
 
-            {/* Edit Balance Modal */}
-            {modal === "balance" && (
-              <>
-                <p style={s.modalTitle}>edit balance — {active?.name}</p>
-                <div style={s.mField}>
-                  <label htmlFor="balance-input" style={s.mLabel}>new balance (₹)</label>
-                  <input
-                    style={s.mInput}
-                    type="text"
-                    inputMode="decimal"
-                    id="balance-input"
-                    value={balanceInput}
-                    onChange={(e) => setBalanceInput(e.target.value)}
-                  />
-                </div>
-                {err && <p style={s.mErr}>// {err}</p>}
-                <div style={s.mBtns}>
-                  <button type="button" disabled={submitting} style={s.mCancel} onClick={() => setModal(null)}>
-                    cancel
-                  </button>
-                  <button
-                    style={s.mConfirm}
-                    type="submit"
-                    disabled={submitting}
-                  >
-                    {submitting ? "saving..." : "update"}
-                  </button>
-                </div>
-              </>
-            )}
+          {/* Edit Balance Modal */}
+          {modal === "balance" && (
+            <>
+              <p style={s.modalTitle}>edit balance — {active?.name}</p>
+              <div style={s.mField}>
+                <label htmlFor="balance-input" style={s.mLabel}>
+                  new balance (₹)
+                </label>
+                <input
+                  style={s.mInput}
+                  type="text"
+                  inputMode="decimal"
+                  id="balance-input"
+                  value={balanceInput}
+                  onChange={(e) => setBalanceInput(e.target.value)}
+                />
+              </div>
+              {err && <p style={s.mErr}>// {err}</p>}
+              <div style={s.mBtns}>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  style={s.mCancel}
+                  onClick={() => setModal(null)}
+                >
+                  cancel
+                </button>
+                <button style={s.mConfirm} type="submit" disabled={submitting}>
+                  {submitting ? "saving..." : "update"}
+                </button>
+              </div>
+            </>
+          )}
 
-            {/* New Profile Modal */}
-            {modal === "profile" && (
-              <>
-                <p style={s.modalTitle}>new profile</p>
-                <div style={s.mField}>
-                  <label htmlFor="profile-name" style={s.mLabel}>name *</label>
-                  <input
-                    style={s.mInput}
-                    id="profile-name"
-                    value={profileForm.name}
-                    onChange={(e) =>
-                      setProfileForm((f) => ({ ...f, name: e.target.value }))
-                    }
-                    placeholder="e.g. personal"
-                  />
-                </div>
-                <div style={s.mField}>
-                  <label htmlFor="profile-balance" style={s.mLabel}>starting balance (₹)</label>
-                  <input
-                    style={s.mInput}
-                    type="text"
-                    inputMode="decimal"
-                    id="profile-balance"
-                    value={profileForm.balance}
-                    onChange={(e) =>
-                      setProfileForm((f) => ({ ...f, balance: e.target.value }))
-                    }
-                    placeholder="0.00"
-                  />
-                </div>
-                {err && <p style={s.mErr}>// {err}</p>}
-                <div style={s.mBtns}>
-                  <button type="button" disabled={submitting} style={s.mCancel} onClick={() => setModal(null)}>
-                    cancel
-                  </button>
-                  <button
-                    style={s.mConfirm}
-                    type="submit"
-                    disabled={submitting}
-                  >
-                    {submitting ? "creating..." : "create"}
-                  </button>
-                </div>
-              </>
-            )}
+          {/* New Profile Modal */}
+          {modal === "profile" && (
+            <>
+              <p style={s.modalTitle}>new profile</p>
+              <div style={s.mField}>
+                <label htmlFor="profile-name" style={s.mLabel}>
+                  name *
+                </label>
+                <input
+                  style={s.mInput}
+                  id="profile-name"
+                  value={profileForm.name}
+                  onChange={(e) =>
+                    setProfileForm((f) => ({ ...f, name: e.target.value }))
+                  }
+                  placeholder="e.g. personal"
+                />
+              </div>
+              <div style={s.mField}>
+                <label htmlFor="profile-balance" style={s.mLabel}>
+                  starting balance (₹)
+                </label>
+                <input
+                  style={s.mInput}
+                  type="text"
+                  inputMode="decimal"
+                  id="profile-balance"
+                  value={profileForm.balance}
+                  onChange={(e) =>
+                    setProfileForm((f) => ({ ...f, balance: e.target.value }))
+                  }
+                  placeholder="0.00"
+                />
+              </div>
+              {err && <p style={s.mErr}>// {err}</p>}
+              <div style={s.mBtns}>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  style={s.mCancel}
+                  onClick={() => setModal(null)}
+                >
+                  cancel
+                </button>
+                <button style={s.mConfirm} type="submit" disabled={submitting}>
+                  {submitting ? "creating..." : "create"}
+                </button>
+              </div>
+            </>
+          )}
         </Modal>
       )}
 
