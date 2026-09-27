@@ -1,7 +1,8 @@
 "use client";
 import { useState, useMemo } from "react";
 import { fmt, fmtExpenseDate } from "../../lib/format";
-import { useProfiles, useCategories, useExpenses } from "../../lib/useAppData";
+import { useProfiles, useCategories, useExpenses, useDebts } from "../../lib/useAppData";
+import { summarizeTabs } from "../../lib/tabs.mjs";
 import DataStatus from "../../components/DataStatus";
 import Link from "next/link";
 import LogoutButton from "../../components/LogoutButton";
@@ -22,6 +23,8 @@ export default function Dashboard() {
     useProfiles();
 
   const categories = useCategories();
+  const debts = useDebts(activeId);
+  const tabs = useMemo(() => summarizeTabs(debts), [debts]);
   const { data: expenses } = useExpenses(activeId, { limit: 6 });
   const { data: amounts } = useExpenses(activeId, { amountsOnly: true });
   const totalSpent = useMemo(
@@ -248,7 +251,7 @@ export default function Dashboard() {
           <div style={s.card}>
             <div style={s.cardRow}>
               <div>
-                <p style={s.cardLabel}>balance</p>
+                <p style={s.cardLabel}>current balance</p>
                 <p
                   style={{
                     ...s.bigNum,
@@ -266,6 +269,12 @@ export default function Dashboard() {
                 edit
               </button>
             </div>
+            <p style={{ fontSize: 10, color: 'var(--muted)', marginTop: 8 }}>
+              owed to you {fmt(tabs.collect)} · you owe {fmt(tabs.pay)}
+            </p>
+            <p style={{ fontSize: 10, color: 'var(--muted)' }}>
+              after settlement {fmt(Number(active.balance) + tabs.collect - tabs.pay)}
+            </p>
             <div style={s.divider} />
             <div style={s.statsRow}>
               <div>
@@ -446,7 +455,7 @@ export default function Dashboard() {
               <p style={s.modalTitle}>edit balance — {active?.name}</p>
               <div style={s.mField}>
                 <label htmlFor="balance-input" style={s.mLabel}>
-                  new balance (₹)
+                  current money in this account (₹)
                 </label>
                 <input
                   style={s.mInput}
@@ -456,6 +465,7 @@ export default function Dashboard() {
                   value={balanceInput}
                   onChange={(e) => setBalanceInput(e.target.value)}
                 />
+                <p style={s.mLabel}>Enter what you have now. Open tabs are not added or deducted again.</p>
               </div>
               {err && <p style={s.mErr}>// {err}</p>}
               <div style={s.mBtns}>

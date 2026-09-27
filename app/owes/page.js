@@ -1,934 +1,136 @@
 "use client";
-
-import { useCallback, useMemo, useState } from "react";
-import { fmt } from "../../lib/format";
+import { useMemo, useState } from "react";
 import { useProfiles, usePeople, useDebts } from "../../lib/useAppData";
-import DataStatus from "../../components/DataStatus";
-import Modal from "../../components/Modal";
-import Nav from "../../components/Nav";
+import { summarizeTabs, splitAmount } from "../../lib/tabs.mjs";
+import { queryCache } from "../../lib/query-cache.mjs";
+import { fmt } from "../../lib/format";
 import { supabase } from "../../lib/supabase";
+import Modal from "../../components/Modal";
+import DataStatus from "../../components/DataStatus";
+import Nav from "../../components/Nav";
 
-const emptyDebt = {
-  person_id: "",
-  direction: "they_owe_me",
-  amount: "",
-  description: "",
-};
-
-export default function OwesPage() {
+export default function TabsPage() {
   const { profiles, activeId, switchProfile, loading, dataError } = useProfiles();
-  const people = usePeople(activeId);
-  const debts = useDebts(activeId);
+  const people = usePeople(activeId), debts = useDebts(activeId);
+  const totals = useMemo(() => summarizeTabs(debts), [debts]);
+  const active = profiles.find(p => p.id === activeId);
+  const [search, setSearch] = useState("");
   const [modal, setModal] = useState(null);
-  const [personName, setPersonName] = useState("");
-  const [debtForm, setDebtForm] = useState(emptyDebt);
-  const [splitForm, setSplitForm] = useState({
-    description: "",
-    amount: "",
-    people: [],
-    includesYou: true,
-  });
-  const [splitPersonQuery, setSplitPersonQuery] = useState("");
-  const [selectedDebt, setSelectedDebt] = useState(null);
-  const [paymentAmount, setPaymentAmount] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [err, setErr] = useState("");
-
-  const { openDebts, settledDebts, owedToYou, youOwe, balances } = useMemo(() => {
-    const openDebts = [];
-    const settledDebts = [];
-    const balances = new Map();
-    let owedToYou = 0;
-    let youOwe = 0;
-    for (const debt of debts) {
-      const amount = Number(debt.remaining_amount);
-      if (amount === 0) settledDebts.push(debt);
-      if (amount <= 0 || !Number.isFinite(amount)) continue;
-      openDebts.push(debt);
-      const balance = balances.get(debt.person_id) || { theyOwe: 0, iOwe: 0 };
-      if (debt.direction === "they_owe_me") {
-        owedToYou += amount;
-        balance.theyOwe += amount;
-      } else if (debt.direction === "i_owe_them") {
-        youOwe += amount;
-        balance.iOwe += amount;
-      }
-      balances.set(debt.person_id, balance);
-    }
-    return { openDebts, settledDebts, owedToYou, youOwe, balances };
-  }, [debts]);
-
-  const personBalances = useMemo(() => people.map((person) => {
-    const { theyOwe = 0, iOwe = 0 } = balances.get(person.id) || {};
-    return { person, theyOwe, iOwe, net: theyOwe - iOwe };
-  }), [balances, people]);
-
-  const openModal = useCallback((type, debt = null) => {
-    setErr("");
-    if (type === "person") setPersonName("");
-    if (type === "debt") setDebtForm(emptyDebt);
-    if (type === "split") {
-      setSplitForm({
-        description: "",
-        amount: "",
-        people: [],
-        includesYou: true,
-      });
-      setSplitPersonQuery("");
-    }
-    if (type === "payment" && debt) {
-      setSelectedDebt(debt);
-      setPaymentAmount(String(debt.remaining_amount));
-    }
-    setModal(type);
-  }, []);
-
-  function closeModal() {
-    if (submitting) return;
-    setModal(null);
-    setSelectedDebt(null);
-    setErr("");
-  }
-
-  async function addPerson() {
-    const name = personName.trim();
-    if (!name) {
-      setErr("enter a name");
-      return;
-    }
-    setSubmitting(true);
-    const { error } = await supabase
-      .from("people")
-      .insert({ profile_id: activeId, name });
-    if (error) {
-      setErr(
-        error.code === "23505" ? "this person already exists" : error.message,
-      );
-      setSubmitting(false);
-      return;
-    }
-    setSubmitting(false);
-    closeModal();
-  }
-
-  async function addDebt() {
-    const amount = Number(debtForm.amount);
-    if (!debtForm.person_id) {
-      setErr("choose a person");
-      return;
-    }
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setErr("enter a valid amount");
-      return;
-    }
-    if (!debtForm.description.trim()) {
-      setErr("add a description");
-      return;
-    }
-    setSubmitting(true);
-    const { error } = await supabase.from("debts").insert({
-      profile_id: activeId,
-      person_id: debtForm.person_id,
-      direction: debtForm.direction,
-      amount,
-      remaining_amount: amount,
-      description: debtForm.description.trim(),
-    });
-    if (error) {
-      setErr(error.message);
-      setSubmitting(false);
-      return;
-    }
-    setSubmitting(false);
-    closeModal();
-  }
-
-  async function addSplit() {
-    const total = Number(splitForm.amount);
-    const selectedPeople = splitForm.people;
-    if (!splitForm.description.trim()) {
-      setErr("add a description");
-      return;
-    }
-    if (!Number.isFinite(total) || total <= 0) {
-      setErr("enter a valid total");
-      return;
-    }
-    if (selectedPeople.length === 0) {
-      setErr("choose at least one person");
-      return;
-    }
-    const divisor = selectedPeople.length + (splitForm.includesYou ? 1 : 0);
-    const paise = Math.round(total * 100);
-    const baseShare = Math.floor(paise / divisor);
-    const remainder = paise % divisor;
-    const splitGroupId = crypto.randomUUID();
-    const rows = selectedPeople.map((personId, index) => {
-      const share = (baseShare + (index < remainder ? 1 : 0)) / 100;
-      return {
-        profile_id: activeId,
-        person_id: personId,
-        direction: "they_owe_me",
-        amount: share,
-        remaining_amount: share,
-        description: splitForm.description.trim(),
-        split_group_id: splitGroupId,
-      };
-    });
-
-    setSubmitting(true);
-    const { error } = await supabase.from("debts").insert(rows);
-    if (error) {
-      setErr(error.message);
-      setSubmitting(false);
-      return;
-    }
-    setSubmitting(false);
-    closeModal();
-  }
-
-  async function recordPayment() {
-    if (!selectedDebt) return;
-    const payment = Number(paymentAmount);
-    const remaining = Number(selectedDebt.remaining_amount);
-    if (!Number.isFinite(payment) || payment <= 0 || payment > remaining) {
-      setErr(`enter an amount up to ${fmt(remaining)}`);
-      return;
-    }
-    const nextRemaining = Math.max(0, Number((remaining - payment).toFixed(2)));
-    setSubmitting(true);
-    const { error } = await supabase
-      .from("debts")
-      .update({
-        remaining_amount: nextRemaining,
-        settled_at: nextRemaining === 0 ? new Date().toISOString() : null,
-      })
-      .eq("id", selectedDebt.id);
-    if (error) {
-      setErr(error.message);
-      setSubmitting(false);
-      return;
-    }
-    setSubmitting(false);
-    closeModal();
-  }
-
-  const debtRows = useMemo(() => openDebts.map((debt) => {
-                    const theyOwe = debt.direction === "they_owe_me";
-                    const paid =
-                      Number(debt.amount) - Number(debt.remaining_amount);
-                    return (
-                      <article key={debt.id} style={s.debtRow}>
-                        <div style={s.debtMain}>
-                          <p style={s.personName}>
-                            {debt.people?.name || "unknown"}
-                          </p>
-                          <p style={s.description}>{debt.description}</p>
-                          <p style={s.direction}>
-                            {theyOwe ? "they owe you" : "you owe them"}
-                            {paid > 0 && ` · ${fmt(paid)} paid`}
-                          </p>
-                        </div>
-                        <div style={s.debtSide}>
-                          <p style={s.amount}>{fmt(debt.remaining_amount)}</p>
-                          <button type="button"
-                            style={s.settleBtn}
-                            onClick={() => openModal("payment", debt)}
-                          >
-                            payment
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  }), [openDebts, openModal]);
-
-  const personRows = useMemo(() => personBalances.map(
-                    ({ person, theyOwe, iOwe, net }, index) => {
-                      const personStatus =
-                        net > 0
-                          ? `collect ${fmt(net)}`
-                          : net < 0
-                            ? `pay ${fmt(Math.abs(net))}`
-                            : "settled";
-                      return (
-                        <div
-                          key={person.id}
-                          style={{
-                            ...s.personRow,
-                            ...(index === personBalances.length - 1
-                              ? s.lastRow
-                              : {}),
-                          }}
-                        >
-                          <div style={s.personMain}>
-                            <p style={s.personName}>{person.name}</p>
-                            <p style={s.personDetail}>
-                              {theyOwe > 0 && iOwe > 0
-                                ? `they owe ${fmt(theyOwe)} · you owe ${fmt(iOwe)}`
-                                : net === 0
-                                  ? "no open amount"
-                                  : net > 0
-                                    ? "they owe you"
-                                    : "you owe them"}
-                            </p>
-                          </div>
-                          <span style={s.personStatus}>{personStatus}</span>
-                        </div>
-                      );
-                    },
-                  ), [personBalances]);
-
-  if (loading || (dataError && !profiles.length)) return <DataStatus error={dataError} />;
-
-  return (
-    <div style={s.page}>
-      <div style={s.wrap}>
-        <div style={s.header}>
-          <span style={s.logo}>OWES</span>
-        </div>
-        {profiles.length > 0 && (
-          <div style={s.tabs}>
-            {profiles.map((profile) => (
-              <button type="button"
-                key={profile.id}
-                style={{
-                  ...s.tab,
-                  ...(profile.id === activeId ? s.tabActive : {}),
-                }}
-                onClick={() => switchProfile(profile.id)}
-              >
-                {profile.name}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {!activeId ? (
-          <p style={s.empty}>create a profile from home first.</p>
-        ) : (
-          <>
-            <div style={s.summaryGrid}>
-              <div style={s.summaryCard}>
-                <p style={s.label}>owed to you</p>
-                <p style={s.summaryValue}>{fmt(owedToYou)}</p>
-              </div>
-              <div style={s.summaryCard}>
-                <p style={s.label}>you owe</p>
-                <p style={s.summaryValue}>{fmt(youOwe)}</p>
-              </div>
-              <div style={s.netCard}>
-                <p style={s.label}>net</p>
-                <p style={s.summaryValue}>{fmt(owedToYou - youOwe)}</p>
-              </div>
-            </div>
-
-            <div style={s.actionRow}>
-              <button type="button" style={s.actionBtn} onClick={() => openModal("debt")}>
-                + add amount
-              </button>
-              <button type="button"
-                style={s.actionBtn}
-                onClick={() => openModal("split")}
-                disabled={people.length === 0}
-              >
-                split payment
-              </button>
-              <button type="button" style={s.actionBtn} onClick={() => openModal("person")}>
-                + person
-              </button>
-            </div>
-            {people.length === 0 && (
-              <p style={s.hint}>
-                add a person before creating an amount or split.
-              </p>
-            )}
-
-            {openDebts.length > 0 ? (
-              <section style={s.section}>
-                <div style={s.sectionHeader}>
-                  <p style={s.sectionLabel}>open amounts</p>
-                </div>
-                <div style={s.list}>
-                  {debtRows}
-                </div>
-              </section>
-            ) : (
-              <p style={s.empty}>no open amounts yet.</p>
-            )}
-
-            {personBalances.length > 0 && (
-              <section style={s.section}>
-                <div style={s.sectionHeader}>
-                  <p style={s.sectionLabel}>people</p>
-                </div>
-                <div style={s.list}>
-                  {personRows}
-                </div>
-              </section>
-            )}
-
-            {settledDebts.length > 0 && (
-              <p style={s.settledNote}>
-                {settledDebts.length} settled amount
-                {settledDebts.length === 1 ? "" : "s"} kept in history.
-              </p>
-            )}
-          </>
-        )}
-      </div>
-
-      {modal && (
-        <Modal title={modal === "person" ? "add person" : modal === "debt" ? "add amount" : modal === "split" ? "split a payment" : "record payment"}
-          style={s.modal} overlayStyle={s.overlay} busy={submitting} onClose={closeModal}
-          onSubmit={modal === "person" ? addPerson : modal === "debt" ? addDebt : modal === "split" ? addSplit : recordPayment}
-          onError={(error) => { setErr(error.message || "could not save"); setSubmitting(false); }}>
-            {modal === "person" && (
-              <>
-                <p style={s.modalTitle}>add person</p>
-                <input
-                  style={s.input}
-                  placeholder="name"
-                  value={personName}
-                  onChange={(event) => setPersonName(event.target.value)}
-                />
-                <ModalActions
-                  onCancel={closeModal}
-                  busy={submitting}
-                  label="save person"
-                />
-              </>
-            )}
-
-            {modal === "debt" && (
-              <>
-                <p style={s.modalTitle}>add amount</p>
-                <PersonSearch
-                  people={people}
-                  value={debtForm.person_id}
-                  onChange={(personId) =>
-                    setDebtForm({ ...debtForm, person_id: personId })
-                  }
-                />
-                <div style={s.directionPicker}>
-                  <button type="button"
-                    style={{
-                      ...s.directionButton,
-                      ...(debtForm.direction === "they_owe_me"
-                        ? s.directionActive
-                        : {}),
-                    }}
-                    onClick={() =>
-                      setDebtForm({ ...debtForm, direction: "they_owe_me" })
-                    }
-                  >
-                    they owe me
-                  </button>
-                  <button type="button"
-                    style={{
-                      ...s.directionButton,
-                      ...(debtForm.direction === "i_owe_them"
-                        ? s.directionActive
-                        : {}),
-                    }}
-                    onClick={() =>
-                      setDebtForm({ ...debtForm, direction: "i_owe_them" })
-                    }
-                  >
-                    i owe them
-                  </button>
-                </div>
-                <input
-                  style={s.input}
-                  inputMode="decimal"
-                  placeholder="amount"
-                  value={debtForm.amount}
-                  onChange={(event) =>
-                    setDebtForm({ ...debtForm, amount: event.target.value })
-                  }
-                />
-                <input
-                  style={s.input}
-                  placeholder="what was it for?"
-                  value={debtForm.description}
-                  onChange={(event) =>
-                    setDebtForm({
-                      ...debtForm,
-                      description: event.target.value,
-                    })
-                  }
-                />
-                <ModalActions
-                  onCancel={closeModal}
-                  busy={submitting}
-                  label="save amount"
-                />
-              </>
-            )}
-
-            {modal === "split" && (
-              <>
-                <p style={s.modalTitle}>split a payment</p>
-                <p style={s.modalHint}>
-                  This creates one “owes you” amount for each selected person.
-                  It never changes your balance.
-                </p>
-                <input
-                  style={s.input}
-                  placeholder="what was it for?"
-                  value={splitForm.description}
-                  onChange={(event) =>
-                    setSplitForm({
-                      ...splitForm,
-                      description: event.target.value,
-                    })
-                  }
-                />
-                <input
-                  style={s.input}
-                  inputMode="decimal"
-                  placeholder="total you paid"
-                  value={splitForm.amount}
-                  onChange={(event) =>
-                    setSplitForm({ ...splitForm, amount: event.target.value })
-                  }
-                />
-                <label style={s.checkRow}>
-                  <input
-                    type="checkbox"
-                    checked={splitForm.includesYou}
-                    onChange={(event) =>
-                      setSplitForm({
-                        ...splitForm,
-                        includesYou: event.target.checked,
-                      })
-                    }
-                  />
-                  <span>include my own share in the split</span>
-                </label>
-                <p style={s.modalLabel}>people to split with</p>
-                <input
-                  style={s.input}
-                  placeholder="search people"
-                  value={splitPersonQuery}
-                  onChange={(event) => setSplitPersonQuery(event.target.value)}
-                />
-                <div style={s.peoplePicker}>
-                  {people
-                    .filter((person) =>
-                      person.name
-                        .toLowerCase()
-                        .includes(splitPersonQuery.trim().toLowerCase()),
-                    )
-                    .map((person) => {
-                      const checked = splitForm.people.includes(person.id);
-                      return (
-                        <button type="button"
-                          key={person.id}
-                          style={{
-                            ...s.personPick,
-                            ...(checked ? s.personPickActive : {}),
-                          }}
-                          onClick={() =>
-                            setSplitForm({
-                              ...splitForm,
-                              people: checked
-                                ? splitForm.people.filter(
-                                    (id) => id !== person.id,
-                                  )
-                                : [...splitForm.people, person.id],
-                            })
-                          }
-                        >
-                          {checked ? "✓ " : ""}
-                          {person.name}
-                        </button>
-                      );
-                    })}
-                </div>
-                <ModalActions
-                  onCancel={closeModal}
-                  busy={submitting}
-                  label="create split"
-                />
-              </>
-            )}
-
-            {modal === "payment" && selectedDebt && (
-              <>
-                <p style={s.modalTitle}>record payment</p>
-                <p style={s.modalHint}>
-                  {selectedDebt.people?.name || "person"} ·{" "}
-                  {selectedDebt.direction === "they_owe_me"
-                    ? "paid you"
-                    : "you paid them"}
-                </p>
-                <p style={s.modalHint}>
-                  remaining: {fmt(selectedDebt.remaining_amount)}
-                </p>
-                <input
-                  style={s.input}
-                  inputMode="decimal"
-                  value={paymentAmount}
-                  onChange={(event) => setPaymentAmount(event.target.value)}
-                />
-                <ModalActions
-                  onCancel={closeModal}
-                  busy={submitting}
-                  label="record payment"
-                />
-              </>
-            )}
-
-            {err && <p style={s.error}>// {err}</p>}
-        </Modal>
-      )}
-      <Nav />
-    </div>
-  );
-}
-
-function ModalActions({ onCancel, busy, label }) {
-  return (
-    <div style={s.modalActions}>
-      <button type="button" style={s.cancelBtn} onClick={onCancel} disabled={busy}>
-        cancel
-      </button>
-      <button type="submit" style={s.confirmBtn} disabled={busy}>
-        {busy ? "saving..." : label}
-      </button>
-    </div>
-  );
-}
-
-function PersonSearch({ people, value, onChange }) {
   const [query, setQuery] = useState("");
-  const selected = people.find((person) => person.id === value);
-  const matches = people.filter((person) =>
-    person.name.toLowerCase().includes(query.trim().toLowerCase()),
-  );
-
-  return (
-    <div style={s.personSearch}>
-      <input
-        style={s.input}
-        placeholder="search people"
-        value={query}
-        onChange={(event) => {
-          setQuery(event.target.value);
-          if (value) onChange("");
-        }}
-      />
-      {selected && (
-        <div style={s.selectedPerson}>
-          <span>{selected.name}</span>
-          <button
-            type="button"
-            style={s.clearPerson}
-            onClick={() => {
-              onChange("");
-              setQuery("");
-            }}
-          >
-            change
-          </button>
-        </div>
-      )}
-      {!selected && query.trim() && (
-        <div style={s.searchResults}>
-          {matches.length > 0 ? (
-            matches.map((person) => (
-              <button
-                type="button"
-                key={person.id}
-                style={s.searchResult}
-                onClick={() => {
-                  onChange(person.id);
-                  setQuery(person.name);
-                }}
-              >
-                {person.name}
-              </button>
-            ))
-          ) : (
-            <p style={s.noResults}>no saved person found</p>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  const [selected, setSelected] = useState([]);
+  const [extraPeople, setExtraPeople] = useState([]);
+  const [direction, setDirection] = useState("they_owe_me");
+  const [amount, setAmount] = useState("");
+  const [description, setDescription] = useState("");
+  const [includesYou, setIncludesYou] = useState(true);
+  const [person, setPerson] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const allPeople = [...people, ...extraPeople.filter(p => !people.some(x => x.id === p.id))];
+  function open(type, p) {
+    setModal(type); setError(""); setQuery(""); setSelected([]); setAmount("");
+    setDescription(""); setIncludesYou(true); setDirection("they_owe_me");
+    if (p) {
+      const t = totals.people.get(p.id) || { collect: 0, pay: 0, entries: [] };
+      setPerson({ ...p, ...t }); setAmount(String(Math.abs(t.collect-t.pay)/100));
+    }
+  }
+  function close() { if (!busy) setModal(null); }
+  async function createPerson() {
+    if (!query.trim() || busy) return;
+    setBusy(true); setError("");
+    try {
+      const { data, error } = await supabase.from("people").insert({ profile_id: activeId, name: query.trim() }).select().single();
+      if (error) throw error;
+      setExtraPeople(rows => [...rows, data]);
+      setSelected(ids => modal === "split" ? [...ids, data.id] : [data.id]); setQuery("");
+    } catch(e) { setError(e.message); } finally { setBusy(false); }
+  }
+  async function save() {
+    if (busy) return;
+    setError(""); setBusy(true);
+    try {
+      let result;
+      if (modal === "settle") {
+        if (!/^\d+(\.\d{1,2})?$/.test(amount)) throw new Error("Enter an amount with up to two decimals.");
+        result = await supabase.rpc("settle_tab", { p_profile: activeId, p_person: person.id,
+          p_payment: Number(amount), p_expected_collect: person.collect/100, p_expected_pay: person.pay/100 });
+      } else {
+        if (!selected.length) throw new Error("Search for a person or add a new name.");
+        if (!description.trim()) throw new Error("Add what this is for.");
+        if (!/^\d+(\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) throw new Error("Enter an amount with up to two decimals.");
+        const split = modal === "split" ? splitAmount(amount, selected.length, includesYou) : { amounts: [Number(amount)], ownShare: 0 };
+        result = await supabase.rpc("add_tab", { p_profile: activeId, p_own_share: split.ownShare,
+          p_rows: selected.map((id,i) => ({ person_id: id, amount: split.amounts[i],
+            direction: modal === "split" ? "they_owe_me" : direction, description: description.trim() })) });
+      }
+      if (result.error) throw result.error;
+      queryCache.invalidate(["profiles","debts","expenses","people"]); setModal(null);
+    } catch(e) { setError(e.message); } finally { setBusy(false); }
+  }
+  let preview;
+  if (modal === "split" && selected.length && Number(amount) > 0) {
+    try { preview = splitAmount(amount, selected.length, includesYou); } catch {}
+  }
+  if (loading || (dataError && !profiles.length)) return <DataStatus error={dataError} />;
+  const matches = allPeople.filter(p => p.profile_id === activeId && p.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const visiblePeople = people.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+  return <div style={s.page}>
+    <div style={s.header}>TABS</div>
+    <div style={s.actions}>{profiles.map(p => <button type="button" style={{...s.button, ...(p.id === activeId ? s.active : {})}} key={p.id} onClick={() => switchProfile(p.id)}>{p.name}</button>)}</div>
+    {active ? <>
+      <div style={s.balance}><p style={s.muted}>current balance</p><p style={s.big}>{fmt(active.balance)}</p>
+        <p style={s.muted}>owed to you {fmt(totals.collect)} · you owe {fmt(totals.pay)}</p>
+        <p style={s.muted}>after settlement {fmt(Number(active.balance)+totals.collect-totals.pay)}</p></div>
+      <div style={s.actions}><button style={s.button} onClick={() => open("add")}>+ add amount</button><button style={s.button} onClick={() => open("split")}>split a payment</button></div>
+      <input style={s.input} aria-label="Search tabs" placeholder="search people" value={search} onChange={e => setSearch(e.target.value)} />
+      {visiblePeople.map(p => {
+        const t = totals.people.get(p.id) || { collect: 0, pay: 0 };
+        const net = t.collect-t.pay;
+        return <div key={p.id} style={s.row}><div style={{minWidth:0, flex:1}}><p style={s.name}>{p.name}</p>
+          <p style={s.muted}>{net > 0 ? "owes you" : net < 0 ? "you owe" : t.collect ? "amounts cancel out" : "settled"}</p>
+          {t.collect > 0 && t.pay > 0 && <p style={s.muted}>owed {fmt(t.collect/100)} · owing {fmt(t.pay/100)}</p>}</div>
+          <div style={{textAlign:"right"}}><p>{fmt(Math.abs(net)/100)}</p>{(t.collect+t.pay)>0 && <button style={s.button} onClick={() => open("settle",p)}>{net === 0 ? "clear tab" : "record payment"}</button>}</div></div>;
+      })}
+      {!visiblePeople.length && <p style={s.muted}>{people.length ? "No matching people." : "Add an amount to start your first tab."}</p>}
+    </> : <p>Create a profile from Home first.</p>}
+    {modal && <Modal title={modal === "settle" ? person.name : "Add to tabs"} onClose={close} onSubmit={save} busy={busy} onError={e => setError(e.message)} style={s.modal}>
+      <p style={s.header}>{modal === "settle" ? person.name : modal === "split" ? "split a payment" : "add amount"}</p>
+      {modal !== "settle" ? <>
+        <label style={s.muted}>people</label>
+        <div style={s.actions}>{selected.map(id => <button type="button" style={s.button} key={id} onClick={() => setSelected(ids => ids.filter(x => x !== id))}>{allPeople.find(p => p.id === id)?.name} ×</button>)}</div>
+        <input style={s.input} aria-label="Search or add person" placeholder="search or add a name" value={query} onChange={e => setQuery(e.target.value)} />
+        {query.trim() && <div style={s.results}>{matches.map(p => <button type="button" style={s.result} key={p.id} onClick={() => { setSelected(ids => modal === "split" ? [...new Set([...ids,p.id])] : [p.id]); setQuery(""); }}>{p.name}</button>)}
+          {!matches.some(p => p.name.toLowerCase() === query.trim().toLowerCase()) && <button type="button" disabled={busy} style={s.result} onClick={createPerson}>+ add “{query.trim()}”</button>}</div>}
+        {modal === "add" && <div style={s.actions}>{[["they_owe_me","they owe me"],["i_owe_them","I owe them"]].map(([id,label]) => <button type="button" key={id} style={{...s.button,...(direction === id ? s.active : {})}} onClick={() => setDirection(id)}>{label}</button>)}</div>}
+        <label style={s.muted}>what was it for?</label><input style={s.input} value={description} onChange={e => setDescription(e.target.value)} aria-label="Description" />
+      </> : <><p style={s.muted}>{person.collect > person.pay ? "Payment received from them" : person.collect < person.pay ? "Payment you made to them" : "Clear matching amounts without moving money"}</p>
+        <p style={s.muted}>net remaining {fmt(Math.abs(person.collect-person.pay)/100)}</p>
+        {person.collect > 0 && person.pay > 0 && <p style={s.muted}>{fmt(Math.min(person.collect,person.pay)/100)} cancels out in both directions when confirmed.</p>}
+        <details style={{margin:"10px 0"}}><summary style={s.muted}>view entries</summary>{person.entries.map(d => <p style={s.muted} key={d.id}>{d.description} · {d.direction === "they_owe_me" ? "owed to you" : "you owe"} {fmt(d.remaining_amount)}</p>)}</details></>}
+      <label style={s.muted}>{modal === "split" ? "total you paid (₹)" : "amount (₹)"}</label>
+      <input style={s.input} inputMode="decimal" aria-label="Amount" value={amount} onChange={e => setAmount(e.target.value)} />
+      {modal === "split" && <><label style={s.muted}><input type="checkbox" style={{appearance:"auto",marginRight:8}} checked={includesYou} onChange={e => setIncludesYou(e.target.checked)} />include my share</label>
+        {preview && <div style={{marginTop:8}}>{selected.map((id,i) => <p style={s.muted} key={id}>{allPeople.find(p => p.id === id)?.name}: {fmt(preview.amounts[i])}</p>)}{includesYou && <p style={s.muted}>your expense: {fmt(preview.ownShare)}</p>}</div>}</>}
+      <p style={{...s.muted,marginTop:10}}>{modal === "split" ? "The full payment leaves your balance. Only your share is logged as an expense." : modal === "add" ? direction === "they_owe_me" ? "This amount leaves your balance now." : "Your balance changes when you record payment." : person.collect < person.pay ? "This payment leaves your balance and is logged as an expense." : person.collect > person.pay ? "This payment is added to your balance." : "Your balance stays the same."}</p>
+      {error && <p role="alert" style={{color:"#b00",fontSize:11}}>{error}</p>}
+      <div style={{...s.actions,marginTop:16}}><button type="button" style={s.button} disabled={busy} onClick={close}>cancel</button><button type="submit" style={{...s.button,...s.active}} disabled={busy}>{busy ? "saving…" : modal === "settle" ? "confirm" : "save"}</button></div>
+    </Modal>}<Nav />
+  </div>;
 }
-
 const s = {
-  page: {
-    minHeight: "100vh",
-    paddingBottom: "calc(var(--nav-h) + 16px)",
-    maxWidth: "480px",
-    margin: "0 auto",
-  },
-  wrap: { padding: "20px 16px 8px" },
-  center: {
-    minHeight: "100vh",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "var(--muted)",
-    fontSize: "12px",
-  },
-  header: { marginBottom: "20px" },
-  logo: { fontSize: "13px", fontWeight: 600, letterSpacing: "0.04em" },
-  tabs: { display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "14px" },
-  tab: {
-    fontSize: "11px",
-    padding: "5px 12px",
-    border: "1px solid var(--border-light)",
-    background: "transparent",
-    color: "var(--muted)",
-  },
-  tabActive: {
-    border: "1px solid #000",
-    color: "#000",
-    background: "var(--subtle)",
-    fontWeight: 600,
-  },
-  summaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr 1fr",
-    gap: "6px",
-    marginBottom: "10px",
-  },
-  summaryCard: {
-    border: "1px solid var(--border-light)",
-    padding: "10px",
-    minWidth: 0,
-  },
-  netCard: {
-    border: "1px solid var(--border-light)",
-    padding: "10px",
-    minWidth: 0,
-  },
-  label: {
-    fontSize: "9px",
-    color: "var(--muted)",
-    letterSpacing: "0.04em",
-    marginBottom: "3px",
-  },
-  summaryValue: {
-    fontSize: "13px",
-    fontWeight: 600,
-    whiteSpace: "nowrap",
-    letterSpacing: "-0.03em",
-  },
-  actionRow: { display: "flex", gap: "7px", marginBottom: "8px" },
-  actionBtn: {
-    flex: 1,
-    border: "1px solid var(--border-light)",
-    background: "transparent",
-    color: "var(--text)",
-    padding: "8px 4px",
-    fontSize: "10px",
-    whiteSpace: "nowrap",
-  },
-  hint: { fontSize: "10px", color: "var(--muted)", marginBottom: "18px" },
-  section: { marginTop: "22px" },
-  sectionHeader: { marginBottom: "7px" },
-  sectionLabel: {
-    fontSize: "10px",
-    color: "var(--muted)",
-    letterSpacing: "0.06em",
-  },
-  list: { border: "1px solid var(--border-light)" },
-  debtRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: "12px",
-    padding: "11px",
-    borderBottom: "1px solid var(--border-light)",
-  },
-  debtMain: { flex: 1, minWidth: 0 },
-  debtSide: { flexShrink: 0, textAlign: "right" },
-  personName: {
-    fontSize: "12px",
-    fontWeight: 600,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  description: {
-    fontSize: "11px",
-    marginTop: "3px",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  direction: { fontSize: "9px", color: "var(--muted)", marginTop: "2px" },
-  amount: { fontSize: "12px", fontWeight: 600, whiteSpace: "nowrap" },
-  settleBtn: {
-    fontSize: "9px",
-    border: "none",
-    background: "transparent",
-    padding: "2px 0",
-    color: "var(--muted)",
-    marginTop: "2px",
-  },
-  personRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: "9px",
-    padding: "10px",
-    borderBottom: "1px solid var(--border-light)",
-  },
-  personMain: { flex: 1, minWidth: 0 },
-  personDetail: {
-    fontSize: "9px",
-    color: "var(--muted)",
-    marginTop: "1px",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  personStatus: {
-    fontSize: "10px",
-    color: "var(--muted)",
-    whiteSpace: "nowrap",
-    textAlign: "right",
-  },
-  lastRow: { borderBottom: "none" },
-  empty: {
-    color: "var(--muted)",
-    fontSize: "12px",
-    textAlign: "center",
-    padding: "36px 0",
-  },
-  settledNote: {
-    color: "var(--muted)",
-    fontSize: "10px",
-    marginTop: "16px",
-    textAlign: "center",
-  },
-  overlay: {
-    position: "fixed",
-    inset: 0,
-    background: "rgba(0,0,0,0.4)",
-    zIndex: 200,
-    display: "flex",
-    alignItems: "flex-end",
-    justifyContent: "center",
-  },
-  modal: {
-    width: "100%",
-    maxWidth: "480px",
-    background: "#fff",
-    borderTop: "1px solid #000",
-    padding: "22px 16px 28px",
-  },
-  modalTitle: { fontSize: "13px", fontWeight: 600, marginBottom: "12px" },
-  modalHint: {
-    fontSize: "10px",
-    color: "var(--muted)",
-    marginBottom: "7px",
-    lineHeight: 1.45,
-  },
-  modalLabel: { fontSize: "10px", color: "var(--muted)", margin: "11px 0 6px" },
-  input: {
-    width: "100%",
-    border: "1px solid var(--border-light)",
-    padding: "9px 10px",
-    marginBottom: "8px",
-    fontSize: "13px",
-  },
-  personSearch: { marginBottom: "8px" },
-  selectedPerson: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    border: "1px solid #000",
-    padding: "8px 10px",
-    fontSize: "11px",
-    marginTop: "-2px",
-  },
-  clearPerson: {
-    border: "none",
-    background: "transparent",
-    color: "var(--muted)",
-    fontSize: "10px",
-    padding: "2px",
-  },
-  searchResults: {
-    border: "1px solid var(--border-light)",
-    borderTop: "none",
-    marginTop: "-8px",
-    marginBottom: "8px",
-  },
-  searchResult: {
-    display: "block",
-    width: "100%",
-    textAlign: "left",
-    border: "none",
-    borderBottom: "1px solid var(--border-light)",
-    background: "#fff",
-    padding: "8px 10px",
-    fontSize: "11px",
-  },
-  noResults: { padding: "8px 10px", color: "var(--muted)", fontSize: "10px" },
-  directionPicker: { display: "flex", gap: "5px", marginBottom: "8px" },
-  directionButton: {
-    flex: 1,
-    border: "1px solid var(--border-light)",
-    background: "transparent",
-    fontSize: "10px",
-    padding: "8px 4px",
-    color: "var(--muted)",
-  },
-  directionActive: {
-    borderColor: "#000",
-    background: "var(--subtle)",
-    color: "#000",
-    fontWeight: 600,
-  },
-  checkRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: "7px",
-    fontSize: "10px",
-    margin: "2px 0 4px",
-    color: "var(--muted)",
-  },
-  peoplePicker: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "5px",
-    marginBottom: "14px",
-  },
-  personPick: {
-    border: "1px solid var(--border-light)",
-    padding: "5px 8px",
-    background: "transparent",
-    fontSize: "10px",
-    color: "var(--muted)",
-  },
-  personPickActive: {
-    borderColor: "#000",
-    background: "var(--subtle)",
-    color: "#000",
-    fontWeight: 600,
-  },
-  modalActions: { display: "flex", gap: "8px", marginTop: "14px" },
-  cancelBtn: {
-    flex: 1,
-    border: "1px solid var(--border-light)",
-    background: "transparent",
-    padding: "10px",
-    fontSize: "11px",
-    color: "var(--muted)",
-  },
-  confirmBtn: {
-    flex: 2,
-    border: "none",
-    background: "#000",
-    color: "#fff",
-    padding: "10px",
-    fontSize: "11px",
-  },
-  error: { fontSize: "10px", marginTop: "10px", color: "#c00" },
+  page:{maxWidth:480,margin:"0 auto",padding:"20px 16px calc(var(--nav-h) + 20px)"},
+  header:{fontSize:13,fontWeight:600,letterSpacing:"0.04em",marginBottom:20},
+  actions:{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12},
+  button:{border:"1px solid var(--border-light)",background:"transparent",color:"var(--text)",padding:"7px 10px",fontSize:11},
+  active:{borderColor:"#000",background:"var(--subtle)",fontWeight:600},
+  balance:{border:"1px solid var(--border-light)",padding:14,marginBottom:14},
+  big:{fontSize:28,fontWeight:600,marginBottom:8},
+  muted:{fontSize:11,color:"var(--muted)",lineHeight:1.7},
+  input:{width:"100%",border:"1px solid var(--border-light)",padding:10,marginBottom:10},
+  row:{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid var(--border-light)"},
+  name:{fontSize:13,fontWeight:500,overflowWrap:"anywhere"},
+  modal:{background:"#fff",width:"100%",maxWidth:480,padding:20},
+  results:{maxHeight:180,overflowY:"auto",marginBottom:12,border:"1px solid var(--border-light)"},
+  result:{display:"block",width:"100%",textAlign:"left",padding:10,border:0,background:"transparent",color:"var(--text)"},
 };

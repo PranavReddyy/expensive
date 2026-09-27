@@ -7,7 +7,7 @@ const links = [
     { href: '/dashboard', label: 'HOME' },
     { href: '/expenses', label: 'EXPENSES' },
     { href: '/analytics', label: 'ANALYTICS' },
-    { href: '/owes', label: 'OWES' },
+    { href: '/owes', label: 'TABS' },
   ]
 
 const Nav = memo(function Nav() {
