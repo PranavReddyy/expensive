@@ -1,14 +1,14 @@
 "use client";
 import { useState, useMemo } from "react";
-import { fmt, fmtExpenseDate } from "../../lib/format";
+import { fmt } from "../../lib/format";
 import { useProfiles, useCategories, useExpenses, useDebts } from "../../lib/useAppData";
 import { summarizeTabs } from "../../lib/tabs.mjs";
 import DataStatus from "../../components/DataStatus";
 import Link from "next/link";
 import LogoutButton from "../../components/LogoutButton";
-import RecentExpenses from "../../components/RecentExpenses";
 import Modal from "../../components/Modal";
 import Nav from "../../components/Nav";
+import AccountSwitcher from "../../components/AccountSwitcher";
 import { supabase } from "../../lib/supabase";
 
 function getNowLocal() {
@@ -25,7 +25,22 @@ export default function Dashboard() {
   const categories = useCategories();
   const debts = useDebts(activeId);
   const tabs = useMemo(() => summarizeTabs(debts), [debts]);
-  const { data: expenses } = useExpenses(activeId, { limit: 6 });
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const { data: monthExpenses, error: monthError, pending: monthPending } = useExpenses(activeId, { start: monthStart, end: new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString() });
+  const overview = useMemo(() => {
+    let month = 0, today = 0;
+    const categories = new Map();
+    const day = new Date().toDateString();
+    for (const expense of monthExpenses) {
+      const value = Number(expense.amount);
+      month += value;
+      if (new Date(expense.created_at).toDateString() === day) today += value;
+      const category = expense.categories?.name || 'uncategorized';
+      categories.set(category, (categories.get(category) || 0) + value);
+    }
+    return { month, today, top: [...categories].sort((a,b) => b[1]-a[1])[0] };
+  }, [monthExpenses]);
   const { data: amounts } = useExpenses(activeId, { amountsOnly: true });
   const totalSpent = useMemo(
     () => amounts.reduce((sum, expense) => sum + Number(expense.amount), 0),
@@ -169,33 +184,6 @@ export default function Dashboard() {
 
   // ─── Render ──────────────────────────────────────────────────
 
-  const expenseRows = useMemo(
-    () =>
-      expenses.map((e) => (
-        <div key={e.id} style={s.expRow}>
-          <div style={s.expLeft}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-                marginBottom: "2px",
-              }}
-            >
-              <p style={s.expReason}>{e.reason}</p>
-              {e.categories && (
-                <span style={s.catTag}>{e.categories.name}</span>
-              )}
-            </div>
-            {e.notes && <p style={s.expNotes}>{e.notes}</p>}
-            <p style={s.expDate}>{fmtExpenseDate(e.created_at)}</p>
-          </div>
-          <p style={s.expAmount}>{fmt(e.amount)}</p>
-        </div>
-      )),
-    [expenses],
-  );
-
   if (loading || (dataError && !profiles.length))
     return <DataStatus error={dataError} />;
 
@@ -218,20 +206,7 @@ export default function Dashboard() {
         </div>
 
         {/* Profile tabs */}
-        {profiles.length > 0 && (
-          <div style={s.tabs}>
-            {profiles.map((p) => (
-              <button
-                type="button"
-                key={p.id}
-                style={{ ...s.tab, ...(p.id === activeId ? s.tabActive : {}) }}
-                onClick={() => switchProfile(p.id)}
-              >
-                {p.name}
-              </button>
-            ))}
-          </div>
-        )}
+        <AccountSwitcher profiles={profiles} activeId={activeId} onChange={switchProfile} />
 
         {profiles.length === 0 && (
           <div style={s.empty}>
@@ -299,19 +274,24 @@ export default function Dashboard() {
           </button>
         )}
 
-        {/* Recent expenses */}
-        {active && expenses.length > 0 && (
-          <div className="home-recent" style={s.section}>
-            <p style={s.sectionLabel}>recent</p>
-            <RecentExpenses style={s.list}>{expenseRows}</RecentExpenses>
-            <Link href="/expenses" className="home-view-all">
-              all expenses →
-            </Link>
-          </div>
-        )}
-
-        {active && expenses.length === 0 && (
-          <p style={s.noData}>no expenses logged yet.</p>
+        {active && (
+          <section style={s.section}>
+            <p style={s.sectionLabel}>at a glance · {now.toLocaleDateString("en-IN", { month: "long" })}</p>
+            {monthError ? <p style={s.noData}>Could not load the spending overview.</p> : monthPending ? <p style={s.noData}>loading overview…</p> : <>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {[["spent today", fmt(overview.today)], ["spent this month", fmt(overview.month)]].map(([label, value]) => (
+                  <div key={label} style={{ border: "1px solid var(--border-light)", padding: 12, minWidth: 0 }}>
+                    <p style={s.cardLabel}>{label}</p><p style={{ ...s.statNum, overflowWrap: "anywhere" }}>{value}</p>
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontSize: 10, color: "var(--muted)", marginTop: 10 }}>
+                {monthExpenses.length} expense{monthExpenses.length === 1 ? "" : "s"} this month
+                {overview.top && <> · most spent on {overview.top[0]} ({fmt(overview.top[1])})</>}
+              </p>
+            </>}
+            <Link href="/analytics" className="home-view-all">view analytics →</Link>
+          </section>
         )}
       </div>
 

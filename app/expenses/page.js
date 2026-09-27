@@ -5,6 +5,7 @@ import { useProfiles, useCategories, useExpenses, usePageState } from "../../lib
 import DataStatus from "../../components/DataStatus";
 import Modal from "../../components/Modal";
 import Nav from "../../components/Nav";
+import AccountSwitcher from "../../components/AccountSwitcher";
 import { supabase } from "../../lib/supabase";
 
 function getPeriodRange(filter, periodDate = new Date()) {
@@ -244,19 +245,7 @@ export default function ExpensesPage() {
         </div>
 
         {/* Profile tabs */}
-        {profiles.length > 0 && (
-          <div style={s.tabs}>
-            {profiles.map((p) => (
-              <button type="button"
-                key={p.id}
-                style={{ ...s.tab, ...(p.id === activeId ? s.tabActive : {}) }}
-                onClick={() => switchProfile(p.id)}
-              >
-                {p.name}
-              </button>
-            ))}
-          </div>
-        )}
+        <AccountSwitcher profiles={profiles} activeId={activeId} onChange={switchProfile} />
 
         {/* Time filter bar */}
         <div style={s.filterBar}>

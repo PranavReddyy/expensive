@@ -8,6 +8,7 @@ import { supabase } from "../../lib/supabase";
 import Modal from "../../components/Modal";
 import DataStatus from "../../components/DataStatus";
 import Nav from "../../components/Nav";
+import AccountSwitcher from "../../components/AccountSwitcher";
 
 export default function TabsPage() {
   const { profiles, activeId, switchProfile, loading, dataError } = useProfiles();
@@ -77,7 +78,7 @@ export default function TabsPage() {
   const visiblePeople = people.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
   return <div style={s.page}>
     <div style={s.header}>TABS</div>
-    <div style={s.actions}>{profiles.map(p => <button type="button" style={{...s.button, ...(p.id === activeId ? s.active : {})}} key={p.id} onClick={() => switchProfile(p.id)}>{p.name}</button>)}</div>
+    <AccountSwitcher profiles={profiles} activeId={activeId} onChange={switchProfile} />
     {active ? <>
       <div style={s.balance}><p style={s.muted}>current balance</p><p style={s.big}>{fmt(active.balance)}</p>
         <p style={s.muted}>owed to you {fmt(totals.collect)} · you owe {fmt(totals.pay)}</p>

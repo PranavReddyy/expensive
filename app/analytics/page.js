@@ -4,6 +4,7 @@ import { fmt, fmtWeekday } from "../../lib/format";
 import { useProfiles, useExpenses, usePageState } from "../../lib/useAppData";
 import DataStatus from "../../components/DataStatus";
 import Nav from "../../components/Nav";
+import AccountSwitcher from "../../components/AccountSwitcher";
 import { supabase } from "../../lib/supabase";
 
 const fmtShort = (n) => {
@@ -568,19 +569,7 @@ export default function AnalyticsPage() {
           <span style={s.logo}>ANALYTICS</span>
         </div>
 
-        {profiles.length > 0 && (
-          <div style={s.tabs}>
-            {profiles.map((p) => (
-              <button
-                key={p.id}
-                style={{ ...s.tab, ...(p.id === activeId ? s.tabActive : {}) }}
-                onClick={() => switchProfile(p.id)}
-              >
-                {p.name}
-              </button>
-            ))}
-          </div>
-        )}
+        <AccountSwitcher profiles={profiles} activeId={activeId} onChange={switchProfile} />
 
         <div style={s.filterBar}>
           {filters.map((f) => (

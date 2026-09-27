@@ -97,10 +97,10 @@ input[type="checkbox"] { -webkit-appearance: auto; appearance: auto; }
   width: 100%;
   height: 100dvh;
   min-height: 0 !important;
-  overflow: hidden;
+  overflow-y: auto;
 }
 .home-page > div:first-child {
-  height: 100%;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -117,7 +117,16 @@ input[type="checkbox"] { -webkit-appearance: auto; appearance: auto; }
 .home-recent-list { flex: 1; min-height: 0; overflow: hidden; }
 .home-view-all { flex-shrink: 0; font-size: 10px; color: var(--muted); padding-top: 8px; }
 
-.popup-overlay { overflow: hidden; }
+.popup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
 .popup-panel {
   max-height: calc(100% - 12px);
   overflow-y: auto;
