@@ -16,6 +16,9 @@ export default function TabsPage() {
   const totals = useMemo(() => summarizeTabs(debts), [debts]);
   const active = profiles.find(p => p.id === activeId);
   const [search, setSearch] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [tabDirection, setTabDirection] = useState("all");
+  const [sortHighToLow, setSortHighToLow] = useState(false);
   const [modal, setModal] = useState(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState([]);
@@ -75,7 +78,22 @@ export default function TabsPage() {
   }
   if (loading || (dataError && !profiles.length)) return <DataStatus error={dataError} />;
   const matches = allPeople.filter(p => p.profile_id === activeId && p.name.toLowerCase().includes(query.trim().toLowerCase()));
-  const visiblePeople = people.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+  const visiblePeople = people
+    .filter(p => {
+      const tab = totals.people.get(p.id);
+      const net = (tab?.collect || 0) - (tab?.pay || 0);
+      return p.name.toLowerCase().includes(search.trim().toLowerCase()) &&
+        (tabDirection === "all" || (tabDirection === "owed" && net > 0) || (tabDirection === "owing" && net < 0));
+    })
+    .sort((a, b) => {
+      if (sortHighToLow) {
+        const aTab = totals.people.get(a.id), bTab = totals.people.get(b.id);
+        const aNet = Math.abs((aTab?.collect || 0) - (aTab?.pay || 0));
+        const bNet = Math.abs((bTab?.collect || 0) - (bTab?.pay || 0));
+        if (aNet !== bNet) return bNet - aNet;
+      }
+      return a.name.localeCompare(b.name);
+    });
   return <div style={s.page}>
     <div style={s.header}>TABS</div>
     <AccountSwitcher profiles={profiles} activeId={activeId} onChange={switchProfile} />
@@ -83,7 +101,25 @@ export default function TabsPage() {
       <div style={s.balance}><p style={s.muted}>current balance</p><p style={s.big}>{fmt(active.balance)}</p>
         <p style={s.muted}>owed to you {fmt(totals.collect)} · you owe {fmt(totals.pay)}</p>
         <p style={s.muted}>after settlement {fmt(Number(active.balance)+totals.collect-totals.pay)}</p></div>
-      <div style={s.actions}><button style={s.button} onClick={() => open("add")}>+ add amount</button><button style={s.button} onClick={() => open("split")}>split a payment</button></div>
+      <div style={s.actions}>
+        <button type="button" style={s.button} onClick={() => open("add")}>+ add amount</button>
+        <button type="button" style={s.button} onClick={() => open("split")}>split a payment</button>
+        <button type="button" style={{ ...s.button, ...(tabDirection !== "all" || sortHighToLow ? s.active : {}) }}
+          onClick={() => setFiltersOpen(open => !open)} aria-expanded={filtersOpen} aria-controls="tab-filters">
+          filter{tabDirection !== "all" || sortHighToLow ? " ·" : ""}
+        </button>
+      </div>
+      {filtersOpen && <div id="tab-filters" style={s.filterPanel}>
+        <div style={s.filterGroup} aria-label="Filter tabs by direction">
+          {[["all", "all"], ["owed", "owed to me"], ["owing", "I owe"]].map(([value, label]) =>
+            <button type="button" key={value} aria-pressed={tabDirection === value}
+              style={{ ...s.button, ...(tabDirection === value ? s.active : {}) }}
+              onClick={() => setTabDirection(value)}>{label}</button>)}
+        </div>
+        <button type="button" aria-pressed={sortHighToLow}
+          style={{ ...s.button, ...(sortHighToLow ? s.active : {}) }}
+          onClick={() => setSortHighToLow(value => !value)}>amount: high to low</button>
+      </div>}
       <input style={s.input} aria-label="Search tabs" placeholder="search people" value={search} onChange={e => setSearch(e.target.value)} />
       {visiblePeople.map(p => {
         const t = totals.people.get(p.id) || { collect: 0, pay: 0 };
@@ -93,7 +129,7 @@ export default function TabsPage() {
           {t.collect > 0 && t.pay > 0 && <p style={s.muted}>owed {fmt(t.collect/100)} · owing {fmt(t.pay/100)}</p>}</div>
           <div style={{textAlign:"right"}}><p>{fmt(Math.abs(net)/100)}</p>{(t.collect+t.pay)>0 && <button style={s.button} onClick={() => open("settle",p)}>{net === 0 ? "clear tab" : "record payment"}</button>}</div></div>;
       })}
-      {!visiblePeople.length && <p style={s.muted}>{people.length ? "No matching people." : "Add an amount to start your first tab."}</p>}
+      {!visiblePeople.length && <p style={s.muted}>{people.length ? "No matching tabs." : "Add an amount to start your first tab."}</p>}
     </> : <p>Create a profile from Home first.</p>}
     {modal && <Modal title={modal === "settle" ? person.name : "Add to tabs"} onClose={close} onSubmit={save} busy={busy} onError={e => setError(e.message)} style={s.modal}>
       <p style={s.header}>{modal === "settle" ? person.name : modal === "split" ? "split a payment" : "add amount"}</p>
@@ -123,6 +159,8 @@ const s = {
   page:{maxWidth:480,margin:"0 auto",padding:"20px 16px calc(var(--nav-h) + 20px)"},
   header:{fontSize:13,fontWeight:600,letterSpacing:"0.04em",marginBottom:20},
   actions:{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12},
+  filterPanel:{border:"1px solid var(--border-light)",padding:10,marginBottom:12},
+  filterGroup:{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8},
   button:{border:"1px solid var(--border-light)",background:"transparent",color:"var(--text)",padding:"7px 10px",fontSize:11},
   active:{borderColor:"#000",background:"var(--subtle)",fontWeight:600},
   balance:{border:"1px solid var(--border-light)",padding:14,marginBottom:14},
