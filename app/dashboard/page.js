@@ -10,6 +10,8 @@ import Modal from "../../components/Modal";
 import Nav from "../../components/Nav";
 import AccountSwitcher from "../../components/AccountSwitcher";
 import { supabase } from "../../lib/supabase";
+import { queryCache } from "../../lib/query-cache.mjs";
+import { homeOverview } from "../../lib/home-overview.mjs";
 
 function getNowLocal() {
   const now = new Date();
@@ -26,26 +28,10 @@ export default function Dashboard() {
   const debts = useDebts(activeId);
   const tabs = useMemo(() => summarizeTabs(debts), [debts]);
   const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const monthStart = new Date(Math.min(new Date(now.getFullYear(), now.getMonth(), 1).getTime(), new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime())).toISOString();
   const { data: monthExpenses, error: monthError, pending: monthPending } = useExpenses(activeId, { start: monthStart, end: new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString() });
-  const overview = useMemo(() => {
-    let month = 0, today = 0;
-    const categories = new Map();
-    const day = new Date().toDateString();
-    for (const expense of monthExpenses) {
-      const value = Number(expense.amount);
-      month += value;
-      if (new Date(expense.created_at).toDateString() === day) today += value;
-      const category = expense.categories?.name || 'uncategorized';
-      categories.set(category, (categories.get(category) || 0) + value);
-    }
-    return { month, today, top: [...categories].sort((a,b) => b[1]-a[1])[0] };
-  }, [monthExpenses]);
-  const { data: amounts } = useExpenses(activeId, { amountsOnly: true });
-  const totalSpent = useMemo(
-    () => amounts.reduce((sum, expense) => sum + Number(expense.amount), 0),
-    [amounts],
-  );
+  const dayKey = now.toDateString();
+  const overview = useMemo(() => homeOverview(monthExpenses), [monthExpenses, dayKey]);
 
   const [modal, setModal] = useState(null); // 'add' | 'balance' | 'profile'
 
@@ -60,8 +46,26 @@ export default function Dashboard() {
   const [profileForm, setProfileForm] = useState({ name: "", balance: "" });
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
+  const [transfer, setTransfer] = useState({ to: '', amount: '', id: '' });
+  const [notice, setNotice] = useState('');
 
   const active = profiles.find((p) => p.id === activeId);
+
+  async function transferMoney() {
+    setErr('');
+    if (!transfer.to || !/^\d+(\.\d{1,2})?$/.test(transfer.amount) || Number(transfer.amount) <= 0) {
+      setErr('Choose an account and enter a valid amount.'); return;
+    }
+    setSubmitting(true);
+    try {
+      const { error } = await supabase.rpc('transfer_money', { p_id: transfer.id, p_from: activeId, p_to: transfer.to, p_amount: Number(transfer.amount) });
+      if (error) throw error;
+      queryCache.invalidate(['profiles']);
+      setNotice(`${fmt(transfer.amount)} transferred to ${profiles.find(p => p.id === transfer.to)?.name}`);
+      setModal(null);
+    } catch (e) { setErr(e.message); }
+    finally { setSubmitting(false); }
+  }
 
   // ─── Actions ─────────────────────────────────────────────────
 
@@ -170,6 +174,8 @@ export default function Dashboard() {
 
   function openModal(type) {
     setErr("");
+    setNotice('');
+    if (type === 'transfer') setTransfer({ to: profiles.find(p => p.id !== activeId)?.id || '', amount: '', id: crypto.randomUUID() });
     if (type === "balance" && active) setBalanceInput(String(active.balance));
     if (type === "add")
       setForm({
@@ -250,17 +256,7 @@ export default function Dashboard() {
             <p style={{ fontSize: 10, color: 'var(--muted)' }}>
               after settlement {fmt(Number(active.balance) + tabs.collect - tabs.pay)}
             </p>
-            <div style={s.divider} />
-            <div style={s.statsRow}>
-              <div>
-                <p style={s.cardLabel}>total logged</p>
-                <p style={s.statNum}>{fmt(totalSpent)}</p>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <p style={s.cardLabel}>profile</p>
-                <p style={s.statNum}>{active.name}</p>
-              </div>
-            </div>
+            {profiles.length > 1 && <button type="button" style={{ ...s.editBtn, marginTop: 12 }} onClick={() => openModal('transfer')}>transfer money →</button>}
           </div>
         )}
 
@@ -274,10 +270,11 @@ export default function Dashboard() {
           </button>
         )}
 
+        {notice && <p role="status" style={{ fontSize: 11, marginBottom: 12 }}>{notice}</p>}
         {active && (
           <section style={s.section}>
-            <p style={s.sectionLabel}>at a glance · {now.toLocaleDateString("en-IN", { month: "long" })}</p>
-            {monthError ? <p style={s.noData}>Could not load the spending overview.</p> : monthPending ? <p style={s.noData}>loading overview…</p> : <>
+            <p style={s.sectionLabel}>spending · {now.toLocaleDateString("en-IN", { month: "long" })}</p>
+            {monthError && !monthExpenses.length ? <p style={s.noData}>Could not load the spending overview.</p> : monthPending && !monthExpenses.length ? <p style={s.noData}>loading overview…</p> : <>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 {[["spent today", fmt(overview.today)], ["spent this month", fmt(overview.month)]].map(([label, value]) => (
                   <div key={label} style={{ border: "1px solid var(--border-light)", padding: 12, minWidth: 0 }}>
@@ -285,10 +282,22 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
-              <p style={{ fontSize: 10, color: "var(--muted)", marginTop: 10 }}>
-                {monthExpenses.length} expense{monthExpenses.length === 1 ? "" : "s"} this month
-                {overview.top && <> · most spent on {overview.top[0]} ({fmt(overview.top[1])})</>}
-              </p>
+              <p style={{ ...s.cardLabel, marginTop: 16 }}>last 7 days</p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 8 }}>
+                {overview.days.map((day, i) => <div key={day.key} title={`${day.label}: ${fmt(day.amount)}`} aria-label={`${day.label}: ${fmt(day.amount)}`}>
+                  <div style={{ height: 54, display: 'flex', alignItems: 'flex-end', borderBottom: '1px solid var(--border-light)' }}>
+                    <div style={{ width: '100%', height: `${day.amount / Math.max(1, ...overview.days.map(d => d.amount)) * 100}%`, minHeight: day.amount ? 2 : 0, background: i === 6 ? '#000' : '#bdbdbd' }} />
+                  </div><p style={{ fontSize: 9, color: 'var(--muted)', textAlign: 'center', marginTop: 4 }}>{day.label}</p>
+                </div>)}
+              </div>
+              {overview.top.length > 0 && <div style={{ marginTop: 14 }}>
+                <p style={s.cardLabel}>top categories this month</p>
+                {overview.top.map(([name, amount]) => <div key={name} style={{ display: 'flex', gap: 12, justifyContent: 'space-between', fontSize: 11, padding: '4px 0' }}>
+                  <span style={{ overflowWrap: 'anywhere' }}>{name}</span><span style={{ whiteSpace: 'nowrap' }}>{fmt(amount)}</span>
+                </div>)}
+              </div>}
+              {!overview.count && <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 10 }}>No expenses this month yet.</p>}
+              {monthError && monthExpenses.length > 0 && <p style={s.cardLabel}>Could not refresh. Showing saved totals.</p>}
             </>}
             <Link href="/analytics" className="home-view-all">view analytics →</Link>
           </section>
@@ -303,7 +312,7 @@ export default function Dashboard() {
               ? "log expense"
               : modal === "balance"
                 ? "edit balance"
-                : "new profile"
+                : modal === "transfer" ? "transfer money" : "new profile"
           }
           style={s.modal}
           overlayStyle={s.overlay}
@@ -314,13 +323,28 @@ export default function Dashboard() {
               ? addExpense
               : modal === "balance"
                 ? updateBalance
-                : createProfile
+                : modal === "transfer" ? transferMoney : createProfile
           }
           onError={(error) => {
             setErr(error.message || "could not save");
             setSubmitting(false);
           }}
         >
+          {modal === 'transfer' && <>
+            <p style={s.modalTitle}>transfer money</p>
+            <p style={{ ...s.mLabel, marginBottom: 12 }}>from {active?.name} · available {fmt(active?.balance)}</p>
+            <div style={s.mField}><label htmlFor="transfer-to" style={s.mLabel}>to account</label>
+              <select id="transfer-to" style={s.mInput} value={transfer.to} disabled={submitting} onChange={e => setTransfer(t => ({ ...t, to: e.target.value, id: crypto.randomUUID() }))}>
+                {profiles.filter(p => p.id !== activeId).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div style={s.mField}><label htmlFor="transfer-amount" style={s.mLabel}>amount (₹)</label>
+              <input id="transfer-amount" style={s.mInput} inputMode="decimal" disabled={submitting} value={transfer.amount} onChange={e => setTransfer(t => ({ ...t, amount: e.target.value, id: crypto.randomUUID() }))} />
+            </div>
+            <p style={s.mLabel}>Moves money between these accounts. Your total money and spending stay the same.</p>
+            {err && <p role="alert" style={s.mErr}>{err}</p>}
+            <div style={s.mBtns}><button type="button" style={s.mCancel} disabled={submitting} onClick={() => setModal(null)}>cancel</button><button type="submit" style={s.mConfirm} disabled={submitting}>{submitting ? 'transferring…' : 'transfer'}</button></div>
+          </>}
           {/* Add Expense Modal */}
           {modal === "add" && (
             <>
