@@ -12,6 +12,7 @@ import AccountSwitcher from "../../components/AccountSwitcher";
 import { supabase } from "../../lib/supabase";
 import { queryCache } from "../../lib/query-cache.mjs";
 import { homeOverview } from "../../lib/home-overview.mjs";
+import { useAuth } from "../../lib/auth-context";
 
 function getNowLocal() {
   const now = new Date();
@@ -21,6 +22,7 @@ function getNowLocal() {
 }
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const { profiles, activeId, switchProfile, loading, dataError } =
     useProfiles();
 
@@ -211,6 +213,7 @@ export default function Dashboard() {
           </div>
         </div>
 
+        <p style={{ fontSize: 10, color: "var(--muted)", marginBottom: 12, overflowWrap: "anywhere" }}>{user?.email}</p>
         {/* Profile tabs */}
         <AccountSwitcher profiles={profiles} activeId={activeId} onChange={switchProfile} />
 

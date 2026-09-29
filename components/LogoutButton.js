@@ -1,10 +1,9 @@
 "use client";
 import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { resetSession } from "../lib/useAppData";
+import { supabase } from "../lib/supabase";
 
 export default function LogoutButton({ style }) {
-  const router = useRouter();
   const pending = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
@@ -14,10 +13,10 @@ export default function LogoutButton({ style }) {
     setBusy(true);
     setError(false);
     try {
-      const response = await fetch("/api/auth/logout", { method: "POST" });
-      if (!response.ok) throw new Error("logout failed");
+      const { error } = await supabase.auth.signOut({ scope: "local" });
+      if (error) throw error;
       resetSession();
-      router.replace("/");
+      window.location.replace("/");
     } catch { setError(true); }
     finally { pending.current = false; setBusy(false); }
   }

@@ -1,28 +1,35 @@
 import { NextResponse } from 'next/server'
+import { createServerClient } from '@supabase/ssr'
 
-export function middleware(request) {
+export async function middleware(request) {
   const { pathname } = request.nextUrl
-  const authToken = request.cookies.get('auth-token')
-
-  const isPublic = pathname === '/'
-  const isApi = pathname.startsWith('/api')
-  // Home-screen installers fetch the manifest and icons without an auth cookie.
-  // Never redirect public files (icons, manifest, scripts, etc.) to the login page.
-  const isPublicAsset = /\/[^/]+\.[^/]+$/.test(pathname)
-
-  if (isApi || isPublicAsset) return NextResponse.next()
-
-  if (!authToken && !isPublic) {
-    return NextResponse.redirect(new URL('/', request.url))
+  let response = NextResponse.next({ request })
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    { cookies: {
+      getAll: () => request.cookies.getAll(),
+      setAll: (cookies) => {
+        cookies.forEach(({ name, value }) => request.cookies.set(name, value))
+        response = NextResponse.next({ request })
+        cookies.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
+      },
+    } },
+  )
+  // Validate with Auth, never trust the presence of a cookie or an embedded user.
+  const { data: { user } } = await supabase.auth.getUser()
+  const signedIn = !!user?.email_confirmed_at
+  const destination = !signedIn && pathname !== '/' ? '/' : signedIn && pathname === '/' ? '/dashboard' : null
+  if (destination) {
+    const redirect = NextResponse.redirect(new URL(destination, request.url))
+    response.cookies.getAll().forEach(cookie => redirect.cookies.set(cookie))
+    response = redirect
   }
-
-  if (authToken && isPublic) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
-  }
-
-  return NextResponse.next()
+  if (request.cookies.has('auth-token')) response.cookies.delete('auth-token')
+  response.headers.set('Cache-Control', 'private, no-store')
+  return response
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/', '/dashboard/:path*', '/expenses/:path*', '/analytics/:path*', '/owes/:path*'],
 }
