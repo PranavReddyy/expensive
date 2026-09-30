@@ -11,7 +11,7 @@ Requires Xcode 26 or newer and iOS 26 or newer.
 1. From the repository root, run `node ios/scripts/configure.mjs --force` after filling in the root `.env`. This copies the public Supabase settings, Firebase Web API key, and HTTPS service URLs into an ignored Xcode configuration. Never use a service-role key in iOS.
 2. Apply [native-operations.sql](Database/native-operations.sql) in your existing Supabase project's SQL Editor. It adds transactional expense operations and duplicate-request protection; it does not reset existing data. The existing multi-user RLS policies and `add_tab`, `settle_tab`, and `transfer_money` functions must already be installed.
 3. Open `ios/Expensive.xcodeproj`, select the **Expensive** scheme and an iPhone simulator, and Run. For a physical device, select your signing team in Signing & Capabilities.
-4. Sign in with your email and password. Existing email-code users must create their Firebase account with the same email and verify it to recover their records.
+4. Sign in with your username or email and password. Signup checks username availability; verify your email and confirm the name to reserve it. Existing email-code users must create their Firebase account with the same email and verify it to recover their records.
 
 For manual configuration, copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig`. Keep the URL escaping shown in that example. If you change `project.yml`, regenerate with `xcodegen generate --spec ios/project.yml` from the repository root.
 

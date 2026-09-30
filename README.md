@@ -14,7 +14,7 @@ A simple place to see what you have, what you spent, and what people owe you.
 
 ## How to use it
 
-1. Create an account with your email and password, verify your email, and choose your username. Already registered? Sign in with the same email and password.
+1. Create an account with your email, password, and an available username. Verify your email, then confirm the username. Already registered? Sign in with your **username or email and password**. Use **forgot password?** to receive a reset email.
 2. Create a profile, such as _cash_ or _bank_, and set its current balance.
 3. Use **+ log expense** on Home whenever you spend. The amount comes off that profile's balance. Use Expenses to find past entries.
 4. Open **Tabs → + add amount** for money shared with someone. Search their name, or add it there if they're new. Use **split a payment** for a group, then **record payment** as people settle up.

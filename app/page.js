@@ -1,7 +1,7 @@
 "use client";
-import { useState } from "react";
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, reload, signOut } from "firebase/auth";
-import { firebaseAuth, identityRequest, authMessage, sendAccountEmail } from "../lib/firebase-client";
+import { useEffect, useState } from "react";
+import { createUserWithEmailAndPassword, reload, signOut } from "firebase/auth";
+import { firebaseAuth, identityRequest, authMessage, sendAccountEmail, signInWithIdentifier, checkUsername } from "../lib/firebase-client";
 import { useAuth } from "../lib/auth-context";
 
 export default function LoginPage() {
@@ -15,6 +15,21 @@ export default function LoginPage() {
   const [notice, setNotice] = useState("");
   const [nextEmail, setNextEmail] = useState(0);
   const verify = !!firebaseUser && !firebaseUser.emailVerified;
+  const choosingUsername = needsUsername || (!firebaseUser && mode === 'signup');
+  const [availability, setAvailability] = useState('');
+  useEffect(() => {
+    setAvailability('');
+    if (!choosingUsername || !username.trim()) return;
+    const controller = new AbortController();
+    setAvailability('checking…');
+    const timer = setTimeout(async () => {
+      try {
+        const available = await checkUsername(username.trim(), controller.signal);
+        if (!controller.signal.aborted) setAvailability(available ? 'available' : 'already taken');
+      } catch (error) { if (!controller.signal.aborted) setAvailability(error.message); }
+    }, 400);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [username, choosingUsername]);
 
   async function run(action) {
     if (busy) return;
@@ -39,12 +54,13 @@ export default function LoginPage() {
         setNotice("If that email has an account, a password reset link is on its way.");
       } else if (mode === "signup") {
         if (password.length < 12) throw new Error("Use at least 12 characters for your password.");
+        if (!await checkUsername(username.trim())) throw new Error('That username is already taken.');
         const { user } = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
         setPassword("");
         await sendAccountEmail('verify'); setNextEmail(Date.now() + 60000);
         setNotice("Check your inbox for a verification link.");
       } else {
-        await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password); setPassword("");
+        await signInWithIdentifier(email.trim().toLowerCase(), password); setPassword("");
       }
     });
   }
@@ -53,14 +69,16 @@ export default function LoginPage() {
     <p style={s.logo}>EXPENS***</p><p style={s.muted}>your money, at a glance</p>
     <form onSubmit={submit} style={s.form}>
       {verify ? <p style={s.muted}>Verify the link sent to {firebaseUser.email}, then continue here.</p>
-        : needsUsername ? <><p style={s.muted}>Choose your username. It belongs to you across our apps.</p>
-          <label style={s.label}>username<input style={s.input} value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} minLength={3} maxLength={24} pattern="[A-Za-z][A-Za-z0-9_]{2,23}" required /></label>
-          <p style={s.muted}>3–24 letters, numbers, or underscores. Usernames are case insensitive and cannot currently be changed.</p></>
+        : needsUsername ? <p style={s.muted}>Confirm your username. It belongs to you across our apps.</p>
         : !firebaseUser && <>
-          <label style={s.label}>email<input style={s.input} type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" autoCapitalize="none" required /></label>
+          <label style={s.label}>{mode === 'signin' ? 'username or email' : 'email'}<input style={s.input} type={mode === 'signin' ? 'text' : 'email'} value={email} onChange={e => setEmail(e.target.value)} autoComplete={mode === 'signin' ? 'username' : 'email'} autoCapitalize="none" spellCheck={false} required /></label>
           {mode !== "reset" && <label style={s.label}>password<input style={s.input} type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete={mode === "signup" ? "new-password" : "current-password"} minLength={mode === "signup" ? 12 : 1} required /></label>}
           {mode === "signup" && <p style={s.muted}>Already used Expensive with email codes? Create your password using that same email to keep your data.</p>}
         </>}
+      {choosingUsername && <>
+        <label style={s.label}>username<input style={s.input} value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} minLength={3} maxLength={24} pattern="[A-Za-z][A-Za-z0-9_]{2,23}" required aria-describedby="username-status" /></label>
+        <p id="username-status" role="status" style={s.muted}>{availability || '3–24 letters, numbers, or underscores; start with a letter.'} {mode === 'signup' && !firebaseUser ? 'Your name is reserved when you confirm it after email verification.' : 'Usernames cannot currently be changed.'}</p>
+      </>}
       {(error || accountError) && <p role="alert" style={s.muted}>{error || accountError}</p>}
       {notice && <p role="status" style={s.muted}>{notice}</p>}
       <button style={s.button} disabled={busy || !ready}>{busy || !ready ? "please wait…" : label}</button>

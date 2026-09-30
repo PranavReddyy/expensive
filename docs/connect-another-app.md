@@ -111,20 +111,29 @@ Example functions using the module above:
 
 ```js
 import {
-  createUserWithEmailAndPassword, signInWithEmailAndPassword,
+  createUserWithEmailAndPassword, signInWithCustomToken,
   reload, signOut,
 } from 'firebase/auth';
 import { auth, supabase, identityRequest } from './accounts';
 
-export async function signUp(email, password) {
+export async function usernameAvailable(username) {
+  const result = await identityRequest(`/api/identity/username?username=${encodeURIComponent(username.trim())}`, { authenticated: false });
+  return result.available;
+}
+
+export async function signUp(email, password, username) {
   if (password.length < 12) throw new Error('Use at least 12 characters.');
+  if (!await usernameAvailable(username)) throw new Error('That username is taken.');
   await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
   // The account already exists if email delivery fails; offer resend, not signup again.
   await resendVerification();
 }
 
-export async function signIn(email, password) {
-  await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+export async function signIn(identifier, password) {
+  const result = await identityRequest('/api/identity/login', {
+    method: 'POST', body: { identifier: identifier.trim(), password }, authenticated: false,
+  });
+  await signInWithCustomToken(auth, result.customToken);
   return finishSignIn();
 }
 
@@ -170,7 +179,9 @@ export async function logout() {
 
 Render the appropriate screen for `needsVerification` or `needsUsername`. After username registration succeeds, the helper refreshes the Firebase token when requested by the server. This makes the `role: authenticated` claim available to Supabase. Never set this claim from a client.
 
-The username is shared, case insensitive, and currently permanent. It is an account name; sign-in still uses email/password. A username conflict returns HTTP 409. Keep an existing username when signing into another app.
+The username is shared, case insensitive, and currently permanent. Sign-in accepts **username or email + password**. Label the field accordingly and use `type="text"` and `autocomplete="username"`, not an email-only input. Signup and password reset still need an email address. Debounce availability checks by about 400 ms and discard stale responses. Availability does not reserve a name: retain the proposed name in your form, then confirm it with `chooseUsername` after verification. A conflict returns HTTP 409; let the user choose another name. Keep an existing username when signing into another app.
+
+The public login endpoint returns only `{ customToken }` after Firebase validates the password. Exchange it immediately with Firebase; do not log or store passwords/custom tokens. It never returns the email behind a username. Failed logins return a generic 401, throttling returns 429. Requests must come from an allowed browser origin or your native client. Do not build a public username-to-email lookup.
 
 Verification and password reset emails always use **Resend**, delivered from the central service. Do not call Firebase's `sendEmailVerification`, `sendPasswordResetEmail`, or REST `accounts:sendOobCode` in the new app. The server creates Firebase action links without asking Firebase to send an email. Links open the shared `/auth/action` page; users then return to their original app. After a password reset, sign in with the new password.
 
@@ -208,7 +219,7 @@ Create equally restrictive policies for every table, Storage bucket, and Realtim
 
 ## 7. Native iOS integration
 
-With Firebase's Apple SDK, call the same identity endpoints using the user's ID token from `getIDToken`. After an identity response with `refreshToken: true`, use the SDK's forced token refresh before calling Supabase. Use its email/password signup, sign-in, user reload, and sign-out APIs; send verification/reset requests to the Resend identity endpoint above.
+With Firebase's Apple SDK, call the same identity endpoints using the user's ID token from `getIDToken`. After an identity response with `refreshToken: true`, use the SDK's forced token refresh before calling Supabase. Use email/password signup, user reload, and sign-out APIs. For username/email login, POST to `/api/identity/login` and exchange its `customToken` with `Auth.auth().signIn(withCustomToken:)`. With REST, exchange it through `accounts:signInWithCustomToken`. Send verification/reset requests to the Resend endpoint above, and use the same availability endpoint for native username fields.
 
 With the REST approach, follow [Expensive's API.swift](../ios/Expensive/API.swift) for Firebase sign-in/refresh and Keychain storage, and point the new app at its own Supabase URL/key. Replace Expensive's `completeAuthentication` bootstrap step with the new app's onboarding. Keep the Firebase string UID as the shared identity and supply refreshed Firebase tokens on data requests. Use a distinct Keychain service name for the new app.
 

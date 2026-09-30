@@ -125,8 +125,15 @@ actor API {
         if create && password.count < 12 { throw AppError.message("Use at least 12 characters for your password.") }
         let data: Data
         do {
-            data = try await firebase(create ? "accounts:signUp" : "accounts:signInWithPassword",
-                body: ["email": email, "password": password, "returnSecureToken": true])
+            if create {
+                data = try await firebase("accounts:signUp", body: ["email": email, "password": password, "returnSecureToken": true])
+            } else {
+                struct LoginResult: Decodable { let customToken: String }
+                let result = try await service(identityURL, path: "api/identity/login", method: "POST",
+                    body: ["identifier": email, "password": password], authenticated: false)
+                let login = try JSONDecoder().decode(LoginResult.self, from: result)
+                data = try await firebase("accounts:signInWithCustomToken", body: ["token": login.customToken, "returnSecureToken": true])
+            }
         } catch AppError.message(let text) where text == "EMAIL_NOT_FOUND" {
             throw AppError.message("Email or password is incorrect.")
         }
@@ -142,6 +149,16 @@ actor API {
 
     func sendVerification() async throws {
         try await accountEmail(kind: "verify")
+    }
+
+    func usernameAvailable(_ username: String) async throws -> Bool {
+        guard let identityURL, identityURL.scheme == "https" else { throw AppError.message("Identity service is not configured.") }
+        var components = URLComponents(url: identityURL.appendingPathComponent("api/identity/username"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "username", value: username)]
+        guard let url = components.url else { throw AppError.message("Invalid username.") }
+        struct Availability: Decodable { let available: Bool }
+        let data = try await send(URLRequest(url: url))
+        return try JSONDecoder().decode(Availability.self, from: data).available
     }
 
     func resetPassword(email: String) async throws {
@@ -171,6 +188,12 @@ actor API {
         }
         let data = try await firebase("accounts:lookup", body: ["idToken": token])
         let account = try JSONDecoder().decode(Lookup.self, from: data).users.first
+        if let email = account?.email, let current = session, version == generation {
+            let updated = Session(accessToken: current.accessToken, refreshToken: current.refreshToken,
+                expiresIn: current.expiresIn, expiresAt: current.expiresAt,
+                user: AuthUser(id: current.user.id, email: email, emailConfirmedAt: nil))
+            try Vault.save(updated); session = updated
+        }
         guard account?.emailVerified == true else { throw AppError.verificationRequired }
         struct Identity: Decodable { let needsUsername: Bool?; let refreshToken: Bool? }
         let identity = try JSONDecoder().decode(Identity.self, from: try await service(identityURL, path: "api/identity", method: "GET"))
@@ -249,6 +272,7 @@ actor API {
         if (200..<300).contains(response.statusCode) { return data }
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         let firebaseError = (json?["error"] as? [String: Any])?["message"] as? String
+        if response.statusCode == 401 && request.url?.path == "/api/identity/login" { throw AppError.message("Username, email, or password is incorrect.") }
         if response.statusCode == 401 || ["TOKEN_EXPIRED", "INVALID_REFRESH_TOKEN", "USER_DISABLED", "USER_NOT_FOUND", "INVALID_ID_TOKEN"].contains(firebaseError ?? "") { throw AppError.signedOut }
         if response.statusCode == 429 || firebaseError == "TOO_MANY_ATTEMPTS_TRY_LATER" { throw AppError.message("Too many attempts. Wait a minute and try again.") }
         switch firebaseError {

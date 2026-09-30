@@ -63,6 +63,8 @@ struct LoginView: View {
     @State private var busy = false
     @State private var notice: String?
     @State private var retryAt = Date.distantPast
+    @State private var availability = ""
+    private var choosingUsername: Bool { store.authStep == .username || (store.authStep == .signIn && creating) }
     private var title: String {
         switch store.authStep {
         case .verify: "I've verified my email"
@@ -80,9 +82,9 @@ struct LoginView: View {
                 switch store.authStep {
                 case .signIn:
                     VStack(alignment: .leading, spacing: 8) {
-                        SectionLabel("email")
-                        TextField("you@example.com", text: $email)
-                            .keyboardType(.emailAddress).textContentType(.emailAddress)
+                        SectionLabel(creating ? "email" : "username or email")
+                        TextField(creating ? "you@example.com" : "username or email", text: $email)
+                            .keyboardType(creating ? .emailAddress : .default).textContentType(creating ? .emailAddress : .username)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                             .padding(14).overlay(Rectangle().stroke(Color.black.opacity(0.2)))
                     }
@@ -100,11 +102,15 @@ struct LoginView: View {
                     Text("Open the verification link sent to \(email), then continue here.")
                         .font(Theme.font(12)).foregroundStyle(.secondary)
                 case .username:
-                    Text("Choose your username, shared across our apps.").foregroundStyle(.secondary)
+                    Text("Confirm your username, shared across our apps.").foregroundStyle(.secondary)
+                }
+                if choosingUsername {
                     TextField("username", text: $username)
                         .textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .padding(14).overlay(Rectangle().stroke(Color.black.opacity(0.2)))
-                    Text("3–24 letters, numbers, or underscores, starting with a letter. Usernames cannot currently be changed.")
+                    Text(availability.isEmpty ? "3–24 letters, numbers, or underscores, starting with a letter." : availability)
+                        .font(Theme.font(11)).foregroundStyle(.secondary)
+                    Text("Your username is reserved after email verification and cannot currently be changed.")
                         .font(Theme.font(11)).foregroundStyle(.secondary)
                 }
                 if let notice { Text(notice).font(Theme.font(11)).foregroundStyle(.secondary) }
@@ -139,12 +145,29 @@ struct LoginView: View {
             }.font(Theme.font()).frame(maxWidth: 380).padding(28).padding(.top, 90).frame(maxWidth: .infinity)
         }.scrollDismissesKeyboard(.interactively)
         .task { if email.isEmpty { email = await API.shared.pendingEmail() } }
+        .task(id: store.authStep) {
+            if store.authStep == .verify { email = await API.shared.pendingEmail() }
+        }
+        .task(id: "\(choosingUsername)-\(username)") {
+            availability = ""
+            guard choosingUsername, !username.trimmed.isEmpty else { return }
+            availability = "checking…"
+            do {
+                try await Task.sleep(for: .milliseconds(400))
+                let available = try await API.shared.usernameAvailable(username.trimmed.lowercased())
+                try Task.checkCancellation()
+                availability = available ? "available" : "already taken"
+            } catch { if !Task.isCancelled { availability = error.localizedDescription } }
+        }
     }
     private func submit() {
         run {
             switch store.authStep {
             case .signIn:
                 defer { password = "" }
+                if creating {
+                    guard try await API.shared.usernameAvailable(username.trimmed.lowercased()) else { throw AppError.message("That username is already taken.") }
+                }
                 try await store.signIn(email: email.trimmed.lowercased(), password: password, create: creating)
             case .verify: try await store.completeSignIn()
             case .username: try await store.completeSignIn(username: username.trimmed.lowercased())

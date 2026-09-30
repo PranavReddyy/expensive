@@ -2,7 +2,7 @@
 
 One Firebase project owns email/password accounts. One Firestore database reserves usernames. Each app has its own Supabase project for its own data. Expensive hosts the initial identity API at `https://expensive.itsbypranav.com`.
 
-Sign-in uses email and password. The username is a shared account name, not a second login method. Users verify their email before choosing a username or accessing financial data. Names are lowercase, 3–24 characters, start with a letter, and contain letters, numbers, or underscores. They cannot currently be renamed or recycled.
+Sign-in accepts **username or email + password**. Signup checks username availability; users verify their email and confirm the name before it is permanently reserved or financial data is accessible. Names are lowercase, 3–24 characters, start with a letter, and contain letters, numbers, or underscores. They cannot currently be renamed or recycled. Availability is a hint; the final transaction prevents two accounts claiming the same name.
 
 ## 1. Configure Firebase once
 
@@ -38,6 +38,14 @@ Set `RESEND_API_KEY` on the server and `AUTH_EMAIL_FROM="Expensive <expensive@it
 `/api/identity/email` generates Firebase verification/reset **links** and always sends them through Resend, from `expensive@itsbypranav.com`. Firebase validates the link; Resend delivers the email. The subject and body are editable in that route. `RESEND_API_KEY` is required on the deployed identity server. Both clients report an error if delivery is unavailable; they do not fall back to Firebase's email sender. This flow uses a password plus verification link rather than numeric sign-in codes.
 
 Delivery is limited to one request per address per minute, five per hour, and `AUTH_EMAIL_DAILY_LIMIT` messages total per UTC day (default **90**). Raise this deliberately as usage grows and your sender's plan permits. Reset requests always return a generic message for missing accounts or exhausted limits. Optional Firestore TTL on `emailLimits.expiresAt` can clean up limiter records; check billing requirements before enabling TTL. Keep current records if cleaning up manually.
+
+Rejected sends and link-generation failures refund their allowance. Ambiguous network timeouts retain it to prevent duplicate sends. Server logs include only the failing stage/provider code, never addresses, action links, tokens, or passwords. A successful send means Resend accepted it; use Resend's delivery events to diagnose spam, bounces, or inbox delivery.
+
+`/api/identity/login` verifies the password with Firebase before returning a custom token, without exposing a username's email publicly. `/api/identity/username?username=...` checks availability. Public requests have Firestore-backed per-IP limits (15 login attempts and 60 availability checks per minute on Vercel). Optional TTL on `authLimits.expiresAt` cleans up old records. Outside Vercel, the limiter conservatively uses one shared bucket; adapt the trusted proxy IP source before deploying on another host.
+
+### If identity routes crash before sending
+
+The scoped `jwks-rsa → jose@5.10.0` override in `package.json` keeps Firebase Admin compatible with Vercel's CommonJS loader. Without it, `ERR_REQUIRE_ESM` can crash even `OPTIONS /api/identity/email` before Resend runs. Keep the lockfile and run `npm ci` on deploy. The test suite loads Firebase Admin with `require(esm)` disabled to catch regressions. Do not remove the override until the upstream dependency/runtime combination has been verified.
 
 ## 3. Migrate Expensive's existing database
 
