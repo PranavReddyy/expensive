@@ -213,7 +213,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <p style={{ fontSize: 10, color: "var(--muted)", marginBottom: 12, overflowWrap: "anywhere" }}>{user?.email}</p>
+        <p style={{ fontSize: 10, color: "var(--muted)", marginBottom: 12, overflowWrap: "anywhere" }}>{user?.username ? `@${user.username} · ` : ""}{user?.email}</p>
         {/* Profile tabs */}
         <AccountSwitcher profiles={profiles} activeId={activeId} onChange={switchProfile} />
 

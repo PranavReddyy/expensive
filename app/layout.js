@@ -7,19 +7,19 @@ export const dynamic = "force-dynamic";
 export const metadata = {
   title: "expensive",
   description: "personal expense tracker",
-  manifest: "/manifest.json",
+  manifest: "/manifest.json?v=newnew-1",
   icons: {
     icon: [
-      { url: "/favicon.svg", type: "image/svg+xml" },
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/favicon-96x96.png", type: "image/png", sizes: "96x96" },
+      { url: "/favicon.svg?v=newnew-1", type: "image/svg+xml" },
+      { url: "/favicon.ico?v=newnew-1", sizes: "any" },
+      { url: "/favicon-96x96.png?v=newnew-1", type: "image/png", sizes: "96x96" },
     ],
-    shortcut: "/favicon.ico",
+    shortcut: "/favicon.ico?v=newnew-1",
     apple: [
-      { url: "/apple-touch-icon-120x120.png", sizes: "120x120", type: "image/png" },
-      { url: "/apple-touch-icon-152x152.png", sizes: "152x152", type: "image/png" },
-      { url: "/apple-touch-icon-167x167.png", sizes: "167x167", type: "image/png" },
-      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+      { url: "/apple-touch-icon-120x120.png?v=newnew-1", sizes: "120x120", type: "image/png" },
+      { url: "/apple-touch-icon-152x152.png?v=newnew-1", sizes: "152x152", type: "image/png" },
+      { url: "/apple-touch-icon-167x167.png?v=newnew-1", sizes: "167x167", type: "image/png" },
+      { url: "/apple-touch-icon.png?v=newnew-1", sizes: "180x180", type: "image/png" },
     ],
   },
   appleWebApp: {

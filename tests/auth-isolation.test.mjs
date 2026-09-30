@@ -5,137 +5,111 @@ import { PGlite } from '@electric-sql/pglite';
 
 const db = new PGlite();
 const id = n => `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
-const owner = id(1), other = id(2), legacyProfile = id(10), legacyCategory = id(20), legacyPerson = id(30);
-const migration = await readFile(new URL('../supabase-auth-migration.sql', import.meta.url), 'utf8');
+const owner=id(1), foreign=id(2), profile=id(10);
 await db.exec(`
-  CREATE ROLE anon NOLOGIN;
-  CREATE ROLE authenticated NOLOGIN;
-  CREATE SCHEMA auth;
-  CREATE TABLE auth.users(id uuid PRIMARY KEY, email text UNIQUE, email_confirmed_at timestamptz);
-  CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
-    $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
-  GRANT USAGE ON SCHEMA public, auth TO anon, authenticated;
-  GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
-  CREATE PUBLICATION supabase_realtime;
+ CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
+ CREATE SCHEMA auth;
+ CREATE TABLE auth.users(id uuid PRIMARY KEY, email text, email_confirmed_at timestamptz);
+ CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
+ $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
+ CREATE FUNCTION auth.jwt() RETURNS jsonb LANGUAGE sql STABLE AS
+ $$ SELECT coalesce(nullif(current_setting('request.jwt.claims',true),''),'{}')::jsonb $$;
+ GRANT USAGE ON SCHEMA public,auth TO anon,authenticated,service_role;
+ CREATE PUBLICATION supabase_realtime;
 `);
-await db.exec(await readFile(new URL('../supabase-schema.sql', import.meta.url), 'utf8'));
-await db.query('INSERT INTO profiles(id,name,balance) VALUES ($1,$2,1000)', [legacyProfile, 'Existing account']);
-await db.query('INSERT INTO categories(id,name) VALUES ($1,$2)', [legacyCategory, 'Private category']);
-await db.query('INSERT INTO expenses(id,profile_id,reason,amount,category_id) VALUES ($1,$2,$3,50,$4)', [id(40), legacyProfile, 'Existing expense', legacyCategory]);
-await db.query('INSERT INTO people(id,profile_id,name) VALUES ($1,$2,$3)', [legacyPerson, legacyProfile, 'Existing person']);
-await db.query("INSERT INTO debts(id,profile_id,person_id,direction,amount,remaining_amount,description) VALUES ($1,$2,$3,'they_owe_me',100,100,'Existing tab')", [id(50), legacyProfile, legacyPerson]);
-await db.query('INSERT INTO auth.users(id,email) VALUES ($1,$2)', [owner, 'pranavreddymitta@gmail.com']);
-// Model the earlier permissive installation to ensure migration removes its access.
-await db.exec('CREATE POLICY old_open_policy ON profiles FOR ALL USING(true) WITH CHECK(true); GRANT ALL ON profiles TO anon;');
-await db.exec(migration);
-after(() => db.close());
-
-async function asUser(userId, run) {
-  await db.query("SELECT set_config('request.jwt.claim.sub', $1, false)", [userId || '']);
-  await db.exec(`SET ROLE ${userId ? 'authenticated' : 'anon'}`);
-  try { return await run(); }
-  finally { await db.exec('RESET ROLE'); }
+await db.exec(await readFile(new URL('./fixtures/legacy-schema.sql',import.meta.url),'utf8'));
+await db.exec(`
+ INSERT INTO auth.users VALUES('${owner}','pranavreddymitta@gmail.com',now()),('${foreign}','other@example.com',now());
+ ALTER TABLE profiles ADD COLUMN user_id uuid REFERENCES auth.users(id) DEFAULT auth.uid();
+ ALTER TABLE categories DROP CONSTRAINT categories_name_key;
+ ALTER TABLE categories ADD COLUMN user_id uuid REFERENCES auth.users(id) DEFAULT auth.uid();
+ ALTER TABLE categories ADD UNIQUE(user_id,name);
+ INSERT INTO profiles(id,user_id,name,balance) VALUES('${profile}','${owner}','Existing',1000),('${id(11)}','${foreign}','Other',500);
+ INSERT INTO categories(id,user_id,name) VALUES('${id(20)}','${owner}','Private');
+ INSERT INTO expenses(id,profile_id,reason,amount,category_id) VALUES('${id(30)}','${profile}','Old expense',25,'${id(20)}');
+ GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
+`);
+await db.exec(await readFile(new URL('../ios/Database/native-operations.sql',import.meta.url),'utf8'));
+const sql=(await readFile(new URL('../supabase-firebase-migration.sql',import.meta.url),'utf8')).replaceAll('YOUR_FIREBASE_PROJECT_ID','test-identity');
+await db.exec(sql);
+after(()=>db.close());
+async function role(name, fn) {
+ await db.exec('SET ROLE '+name); try { return await fn(); } finally { await db.exec('RESET ROLE'); }
 }
+async function asUser(uid,fn,extra={}) {
+ await db.query("SELECT set_config('request.jwt.claims',$1,false)",[JSON.stringify({
+   sub:uid,iss:'https://securetoken.google.com/test-identity',aud:'test-identity',email_verified:true,role:'authenticated',...extra
+ })]);
+ return role('authenticated',fn);
+}
+const enroll=(uid,email)=>role('service_role',()=>db.query("SELECT enroll_firebase_user($1,$2,'test-identity') AS id",[uid,email]));
 
-test('migration preserves existing money and reserves records until the owner verifies email', async () => {
-  const row = (await db.query('SELECT user_id,balance FROM profiles WHERE id=$1', [legacyProfile])).rows[0];
-  assert.equal(row.user_id, null);
-  assert.equal(Number(row.balance), 1000);
-  await asUser(owner, async () => assert.equal((await db.query('SELECT * FROM profiles')).rows.length, 0));
-  assert.equal((await db.query("SELECT * FROM pg_policies WHERE policyname='old_open_policy'")).rows.length, 0);
+test('verified server enrollment preserves UUID, balance, categories, and expense history',async()=>{
+ const row=(await enroll('firebase-owner','pranavreddymitta@gmail.com')).rows[0];
+ assert.equal(row.id,owner);
+ await asUser('firebase-owner',async()=>{
+  assert.equal((await db.query('SELECT current_app_user_id() AS id')).rows[0].id,owner);
+  assert.equal(Number((await db.query('SELECT balance FROM profiles')).rows[0].balance),1000);
+  assert.equal((await db.query('SELECT * FROM expenses')).rows.length,1);
+  assert.equal((await db.query('SELECT * FROM categories')).rows.length,1);
+ });
+ assert.equal((await enroll('firebase-owner','changed@example.com')).rows[0].id,owner);
+ await assert.rejects(enroll('impostor','pranavreddymitta@gmail.com'),/already linked/);
 });
-
-test('another verified email cannot claim the existing records or call the private claim function', async () => {
-  await db.query('INSERT INTO auth.users(id,email,email_confirmed_at) VALUES ($1,$2,now())', [other, 'another@example.com']);
-  await asUser(other, async () => {
-    assert.equal((await db.query('SELECT * FROM profiles')).rows.length, 0);
-    assert.equal((await db.query('SELECT * FROM expenses')).rows.length, 0);
-    assert.equal((await db.query('SELECT * FROM categories')).rows.length, 5);
-    await assert.rejects(db.query('SELECT app_private.initialize_user($1)', [other]), /permission denied/);
-    await assert.rejects(db.query('INSERT INTO profiles(name,user_id) VALUES ($1,$2)', ['Stolen', owner]), /row-level security/);
-    await assert.rejects(db.query('INSERT INTO profiles(name,user_id) VALUES ($1,NULL)', ['Unowned']), /row-level security/);
-  });
+test('new identities receive private UUIDs and default categories; enrollment is idempotent',async()=>{
+ const first=(await enroll('firebase-new','new@example.com')).rows[0].id;
+ assert.notEqual(first,owner);
+ assert.equal((await enroll('firebase-new','new@example.com')).rows[0].id,first);
+ await asUser('firebase-new',async()=>{
+  assert.equal((await db.query('SELECT * FROM profiles')).rows.length,0);
+  assert.equal((await db.query('SELECT * FROM categories')).rows.length,5);
+  await db.query("INSERT INTO profiles(id,name,balance) VALUES($1,'Mine',250)",[id(12)]);
+  assert.equal((await db.query('SELECT user_id FROM profiles')).rows[0].user_id,first);
+  await assert.rejects(db.query("INSERT INTO profiles(name,user_id) VALUES('Steal',$1)",[owner]),/row-level security/);
+  await assert.rejects(db.query("INSERT INTO expenses(profile_id,reason,amount,category_id) VALUES($1,'Foreign category',1,$2)",[id(12),id(20)]),/row-level security/);
+ });
 });
-
-test('only the verified original email receives all its existing data without changing balances', async () => {
-  await db.query('UPDATE auth.users SET email_confirmed_at=now() WHERE id=$1', [owner]);
-  await asUser(owner, async () => {
-    const profiles = (await db.query('SELECT * FROM profiles')).rows;
-    assert.equal(profiles.length, 1);
-    assert.equal(profiles[0].user_id, owner);
-    assert.equal(Number(profiles[0].balance), 1000);
-    for (const table of ['categories', 'expenses', 'people', 'debts'])
-      assert.equal((await db.query(`SELECT * FROM ${table}`)).rows.length, 1);
-  });
+test('wrong issuer, wrong project, unverified, unregistered and legacy tokens have no financial access',async()=>{
+ for(const extra of [{iss:'https://securetoken.google.com/evil'},{aud:'evil'},{email_verified:false},{role:'anon'},{iss:'https://old.supabase.co/auth/v1'}]){
+  await asUser('firebase-owner',async()=>{
+   assert.equal((await db.query('SELECT * FROM profiles')).rows.length,0);
+   await assert.rejects(db.query("INSERT INTO profiles(name) VALUES('No access')"),/row-level security/);
+  },extra);
+ }
+ await asUser('missing',async()=>assert.equal((await db.query('SELECT * FROM expenses')).rows.length,0));
 });
-
-test('anonymous clients cannot read or write any app table or execute money functions', async () => {
-  await asUser(null, async () => {
-    for (const table of ['profiles', 'categories', 'expenses', 'people', 'debts', 'profile_transfers']) {
-      await assert.rejects(db.query(`SELECT * FROM ${table}`), /permission denied/);
-      await assert.rejects(db.query(`DELETE FROM ${table}`), /permission denied/);
-    }
-    await assert.rejects(db.query('SELECT add_tab($1,$2::jsonb,0)', [legacyProfile, '[]']), /permission denied/);
-    await assert.rejects(db.query('SELECT settle_tab($1,$2,1,100,0)', [legacyProfile, legacyPerson]), /permission denied/);
-    await assert.rejects(db.query('SELECT transfer_money($1,$2,$3,1)', [id(80), legacyProfile, id(11)]), /permission denied/);
-  });
+test('clients cannot enroll themselves or read the private mapping; anonymous access denied',async()=>{
+ await asUser('firebase-owner',async()=>{
+  await assert.rejects(db.query("SELECT enroll_firebase_user('steal','pranavreddymitta@gmail.com','test-identity')"),/permission denied/);
+  await assert.rejects(db.query('SELECT * FROM app_private.firebase_accounts'),/permission denied/);
+ });
+ await role('anon',async()=>{
+  for(const table of ['profiles','categories','expenses','people','debts','profile_transfers','ios_tab_requests'])
+   await assert.rejects(db.query('SELECT * FROM '+table),/permission denied/);
+  await assert.rejects(db.query('SELECT ios_delete_expense($1)',[id(30)]),/permission denied/);
+ });
 });
-
-test('user-scoped CRUD works while guessed foreign IDs and ownership changes are denied', async () => {
-  await asUser(other, async () => {
-    await db.query('INSERT INTO profiles(id,name,balance) VALUES ($1,$2,500),($3,$4,0)', [id(11), 'My cash', id(12), 'My bank']);
-    assert.equal((await db.query('SELECT user_id FROM profiles WHERE id=$1', [id(11)])).rows[0].user_id, other);
-    await db.query('INSERT INTO categories(id,name) VALUES ($1,$2)', [id(21), 'Private category']);
-    await db.query('INSERT INTO people(id,profile_id,name) VALUES ($1,$2,$3)', [id(31), id(11), 'My person']);
-    assert.equal((await db.query('UPDATE profiles SET balance=0 WHERE id=$1 RETURNING id', [legacyProfile])).rows.length, 0);
-    assert.equal((await db.query('DELETE FROM expenses WHERE profile_id=$1 RETURNING id', [legacyProfile])).rows.length, 0);
-    assert.equal((await db.query('SELECT * FROM people WHERE id=$1', [legacyPerson])).rows.length, 0);
-    await assert.rejects(db.query('UPDATE profiles SET user_id=$1 WHERE id=$2', [owner, id(11)]), /row-level security/);
-    await assert.rejects(db.query('UPDATE categories SET user_id=$1 WHERE id=$2', [owner, id(21)]), /row-level security/);
-    await assert.rejects(db.query('INSERT INTO expenses(profile_id,reason,amount) VALUES ($1,$2,1)', [legacyProfile, 'Cross user']), /row-level security/);
-    await assert.rejects(db.query('INSERT INTO expenses(profile_id,reason,amount,category_id) VALUES ($1,$2,1,$3)', [id(11), 'Foreign category', legacyCategory]), /row-level security/);
-    await assert.rejects(db.query("INSERT INTO debts(profile_id,person_id,direction,amount,remaining_amount,description) VALUES ($1,$2,'they_owe_me',1,1,'Foreign person')", [id(11), legacyPerson]), /row-level security/);
-    await db.query('INSERT INTO expenses(profile_id,reason,amount,category_id) VALUES ($1,$2,1,$3)', [id(11), 'Own expense', id(21)]);
-    assert.equal((await db.query('SELECT * FROM expenses')).rows.length, 1);
-    assert.equal((await db.query('SELECT * FROM profiles')).rows.length, 2);
-    assert.equal((await db.query('SELECT * FROM people')).rows.length, 1);
-    assert.equal((await db.query('SELECT * FROM debts')).rows.length, 0);
-    assert.equal((await db.query('SELECT * FROM profile_transfers')).rows.length, 0);
-  });
+test('money RPCs preserve ownership and retry behavior under Firebase tokens',async()=>{
+ await asUser('firebase-owner',async()=>{
+  await db.query("INSERT INTO profiles(id,name,balance) VALUES($1,'Bank',0)",[id(13)]);
+  await db.query('SELECT transfer_money($1,$2,$3,100)',[id(40),profile,id(13)]);
+  await db.query('SELECT transfer_money($1,$2,$3,100)',[id(40),profile,id(13)]);
+  assert.equal(Number((await db.query('SELECT balance FROM profiles WHERE id=$1',[profile])).rows[0].balance),900);
+  await db.query("INSERT INTO people(id,profile_id,name) VALUES($1,$2,'Friend')",[id(50),profile]);
+  const rows=JSON.stringify([{person_id:id(50),amount:10,direction:'they_owe_me',description:'Lunch'}]);
+  await db.query('SELECT ios_add_tabs($1,$2,$3,0)',[id(60),profile,rows]);
+  await db.query('SELECT ios_add_tabs($1,$2,$3,0)',[id(60),profile,rows]);
+  await db.query('SELECT settle_tab($1,$2,10,10,0)',[profile,id(50)]);
+  assert.equal(Number((await db.query('SELECT balance FROM profiles WHERE id=$1',[profile])).rows[0].balance),900);
+  await assert.rejects(db.query('SELECT transfer_money($1,$2,$3,1)',[id(41),profile,id(11)]),/Account not found/);
+ });
+ await asUser('firebase-new',async()=>{
+  assert.equal((await db.query('UPDATE profiles SET balance=0 WHERE id=$1 RETURNING id',[profile])).rows.length,0);
+  await assert.rejects(db.query('SELECT add_tab($1,$2,0)',[profile,'[]']),/Account not found/);
+ });
 });
-
-test('money RPCs reject cross-user accounts and preserve valid transfers and settlements', async () => {
-  await asUser(other, async () => {
-    await assert.rejects(db.query('SELECT transfer_money($1,$2,$3,10)', [id(81), id(11), legacyProfile]), /Account not found/);
-    await assert.rejects(db.query('SELECT transfer_money($1,$2,$3,10)', [id(82), legacyProfile, id(11)]), /Account not found/);
-    await assert.rejects(db.query('SELECT add_tab($1,$2::jsonb,0)', [legacyProfile, JSON.stringify([{person_id: legacyPerson, amount: 5, direction: 'they_owe_me', description: 'Attempt'}])]), /Account not found/);
-    await assert.rejects(db.query('SELECT settle_tab($1,$2,100,100,0)', [legacyProfile, legacyPerson]), /Account not found/);
-    await assert.rejects(db.query('INSERT INTO profile_transfers(id,from_profile,to_profile,amount) VALUES ($1,$2,$3,1)', [id(83), id(11), legacyProfile]), /row-level security/);
-    await db.query('SELECT transfer_money($1,$2,$3,20)', [id(84), id(11), id(12)]);
-    await db.query('SELECT transfer_money($1,$2,$3,20)', [id(84), id(11), id(12)]);
-    assert.deepEqual((await db.query('SELECT balance FROM profiles ORDER BY id')).rows.map(row => Number(row.balance)), [480,20]);
-    await db.query('SELECT add_tab($1,$2::jsonb,0)', [id(11), JSON.stringify([{person_id: id(31), amount: 10, direction: 'i_owe_them', description: 'Lunch'}])]);
-    await db.query('SELECT settle_tab($1,$2,10,0,10)', [id(11), id(31)]);
-    assert.equal(Number((await db.query('SELECT balance FROM profiles WHERE id=$1', [id(11)])).rows[0].balance),470);
-    assert.equal((await db.query('SELECT * FROM expenses')).rows.length, 2);
-  });
-  assert.equal(Number((await db.query('SELECT balance FROM profiles WHERE id=$1', [legacyProfile])).rows[0].balance),1000);
-  await asUser(owner, async () => assert.equal((await db.query('SELECT * FROM profile_transfers')).rows.length,0));
-});
-
-test('rerunning the migration keeps assigned ownership and categories intact', async () => {
-  await db.exec(migration);
-  assert.equal((await db.query('SELECT user_id FROM profiles WHERE id=$1', [legacyProfile])).rows[0].user_id,owner);
-  await asUser(other, async () => assert.equal((await db.query('SELECT * FROM categories')).rows.length,6));
-});
-
-test('an owner verified before migration receives the legacy rows immediately', async () => {
-  // Recreate only the pre-migration ownership state, preserving the verified account.
-  await db.exec('DROP TRIGGER expensive_user_verified ON auth.users;');
-  await db.query('UPDATE profiles SET user_id=NULL WHERE id=$1', [legacyProfile]);
-  await db.query('UPDATE categories SET user_id=NULL WHERE id=$1', [legacyCategory]);
-  await db.exec('UPDATE app_private.legacy_owner SET claimed_by=NULL;');
-  await db.exec(migration);
-  assert.equal((await db.query('SELECT user_id FROM profiles WHERE id=$1', [legacyProfile])).rows[0].user_id,owner);
-  assert.equal((await db.query('SELECT user_id FROM categories WHERE id=$1', [legacyCategory])).rows[0].user_id,owner);
+test('migration rerun preserves enrollment and ownership',async()=>{
+ await db.exec(sql);
+ assert.equal((await enroll('firebase-owner','pranavreddymitta@gmail.com')).rows[0].id,owner);
+ await asUser('firebase-new',async()=>assert.equal((await db.query('SELECT * FROM categories')).rows.length,5));
 });

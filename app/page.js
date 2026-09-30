@@ -1,187 +1,88 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
-import { supabase } from "../lib/supabase";
-
-function authError(error) {
-  if (["over_email_send_rate_limit", "over_request_rate_limit"].includes(error?.code) || error?.status === 429)
-    return "Too many attempts. Please wait a minute before trying again.";
-  if (["otp_expired", "otp_disabled", "invalid_credentials"].includes(error?.code))
-    return "That code is invalid or expired. Try again or request a new code.";
-  return "Could not sign in. Please try again in a moment.";
-}
+import { useState } from "react";
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, reload, signOut } from "firebase/auth";
+import { firebaseAuth, identityRequest, authMessage, sendAccountEmail } from "../lib/firebase-client";
+import { useAuth } from "../lib/auth-context";
 
 export default function LoginPage() {
+  const { firebaseUser, needsUsername, error: accountError, refreshAuth, ready } = useAuth();
+  const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [sent, setSent] = useState(false);
-  const [retryAt, setRetryAt] = useState(0);
-  const [seconds, setSeconds] = useState(0);
-  const [notice, setNotice] = useState("");
+  const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const loginPending = useRef(false);
+  const [notice, setNotice] = useState("");
+  const [nextEmail, setNextEmail] = useState(0);
+  const verify = !!firebaseUser && !firebaseUser.emailVerified;
 
-  useEffect(() => {
-    const tick = () => setSeconds(Math.max(0, Math.ceil((retryAt - Date.now()) / 1000)));
-    tick();
-    const interval = setInterval(tick, 1000);
-    return () => clearInterval(interval);
-  }, [retryAt]);
-
-  async function sendCode() {
-    if (loginPending.current || (sent && Date.now() < retryAt)) return;
-    loginPending.current = true;
-    setLoading(true); setError(""); setNotice("");
-    try {
-      const normalized = email.trim().toLowerCase();
-      const { error } = await supabase.auth.signInWithOtp({ email: normalized, options: { shouldCreateUser: true } });
-      if (error) throw error;
-      setEmail(normalized); setSent(true); setCode(""); setRetryAt(Date.now() + 60000);
-      setNotice("Code sent. Check your inbox and spam folder.");
-    } catch (error) { setError(authError(error)); }
-    finally { loginPending.current = false; setLoading(false); }
+  async function run(action) {
+    if (busy) return;
+    setBusy(true); setError(""); setNotice("");
+    try { await action(); } catch (error) { setError(authMessage(error)); }
+    finally { setBusy(false); }
   }
-
-  async function verifyCode(e) {
-    e.preventDefault();
-    if (loginPending.current) return;
-    loginPending.current = true;
-    setLoading(true);
-    setError("");
-
-    try {
-      const { data, error } = await supabase.auth.verifyOtp({ email, token: code.trim(), type: "email" });
-      if (error) throw error;
-      if (!data.session || !data.user?.email_confirmed_at) throw new Error("No verified session");
-      // Start a fresh page after cookies have been saved, including a fresh data cache.
-      window.location.replace("/dashboard");
-    } catch (error) {
-      setError(authError(error));
-    } finally {
-      loginPending.current = false;
-      setLoading(false);
-    }
+  async function submit(event) {
+    event.preventDefault();
+    await run(async () => {
+      const auth = firebaseAuth();
+      if (verify) {
+        await reload(auth.currentUser); await auth.currentUser.getIdToken(true);
+        if (!auth.currentUser.emailVerified) throw new Error("Open the verification link in your email first.");
+        await refreshAuth();
+      } else if (needsUsername) {
+        await identityRequest("POST", username); await refreshAuth();
+      } else if (firebaseUser) {
+        await refreshAuth();
+      } else if (mode === "reset") {
+        await sendAccountEmail('reset', email.trim().toLowerCase());
+        setNotice("If that email has an account, a password reset link is on its way.");
+      } else if (mode === "signup") {
+        if (password.length < 12) throw new Error("Use at least 12 characters for your password.");
+        const { user } = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+        setPassword("");
+        await sendAccountEmail('verify'); setNextEmail(Date.now() + 60000);
+        setNotice("Check your inbox for a verification link.");
+      } else {
+        await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password); setPassword("");
+      }
+    });
   }
-
-  return (
-    <div style={s.page}>
-      <div style={s.box}>
-        <p style={s.logo}>EXPENS***</p>
-        <p style={s.version}>your money, at a glance</p>
-
-        <form onSubmit={sent ? verifyCode : e => { e.preventDefault(); sendCode(); }} style={s.form}>
-          <div style={s.field}>
-            <label htmlFor="email" style={s.label}>email</label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={s.input}
-              autoComplete="email"
-              autoCapitalize="none"
-              spellCheck={false}
-              disabled={loading || sent}
-              required
-            />
-          </div>
-
-          {sent ? <div style={s.field}>
-            <label htmlFor="code" style={s.label}>verification code</label>
-            <input
-              id="code"
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]{6,10}"
-              maxLength={10}
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-              style={s.input}
-              autoComplete="one-time-code"
-              autoFocus
-              disabled={loading}
-              required
-            />
-          </div> : <p style={s.label}>We'll email you a code to sign in or create your account. No password needed.</p>}
-
-          {notice && <p role="status" style={s.label}>{notice}</p>}
-          {error && <p role="alert" style={s.error}>{error}</p>}
-
-          <button type="submit" style={s.btn} disabled={loading}>
-            {loading ? "please wait…" : sent ? "verify & continue →" : "send code →"}
-          </button>
-          {sent && <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <button type="button" style={s.link} disabled={loading || seconds > 0} onClick={sendCode}>
-              {seconds > 0 ? `resend in ${seconds}s` : "resend code"}
-            </button>
-            <button type="button" style={s.link} disabled={loading} onClick={() => { setSent(false); setCode(""); setError(""); setNotice(""); }}>change email</button>
-          </div>}
-        </form>
-      </div>
-    </div>
-  );
+  const label = verify ? "I've verified my email →" : needsUsername ? "save username →" : firebaseUser ? "retry connection →" : mode === "signup" ? "create account →" : mode === "reset" ? "send reset link →" : "sign in →";
+  return <main style={s.page}><div style={s.box}>
+    <p style={s.logo}>EXPENS***</p><p style={s.muted}>your money, at a glance</p>
+    <form onSubmit={submit} style={s.form}>
+      {verify ? <p style={s.muted}>Verify the link sent to {firebaseUser.email}, then continue here.</p>
+        : needsUsername ? <><p style={s.muted}>Choose your username. It belongs to you across our apps.</p>
+          <label style={s.label}>username<input style={s.input} value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} minLength={3} maxLength={24} pattern="[A-Za-z][A-Za-z0-9_]{2,23}" required /></label>
+          <p style={s.muted}>3–24 letters, numbers, or underscores. Usernames are case insensitive and cannot currently be changed.</p></>
+        : !firebaseUser && <>
+          <label style={s.label}>email<input style={s.input} type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" autoCapitalize="none" required /></label>
+          {mode !== "reset" && <label style={s.label}>password<input style={s.input} type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete={mode === "signup" ? "new-password" : "current-password"} minLength={mode === "signup" ? 12 : 1} required /></label>}
+          {mode === "signup" && <p style={s.muted}>Already used Expensive with email codes? Create your password using that same email to keep your data.</p>}
+        </>}
+      {(error || accountError) && <p role="alert" style={s.muted}>{error || accountError}</p>}
+      {notice && <p role="status" style={s.muted}>{notice}</p>}
+      <button style={s.button} disabled={busy || !ready}>{busy || !ready ? "please wait…" : label}</button>
+      {verify && <button type="button" style={s.link} disabled={busy} onClick={() => run(async () => {
+        if (Date.now() < nextEmail) throw new Error("Wait a minute before requesting another email.");
+        await sendAccountEmail('verify'); setNextEmail(Date.now() + 60000); setNotice("Verification link sent.");
+      })}>resend verification email</button>}
+      {firebaseUser ? <button type="button" style={s.link} disabled={busy} onClick={() => run(() => signOut(firebaseAuth()))}>use another account</button>
+        : <div style={s.links}>
+          <button type="button" style={s.link} disabled={busy} onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setError(""); setNotice(""); }}>{mode === "signup" ? "sign in instead" : "create account"}</button>
+          <button type="button" style={s.link} disabled={busy} onClick={() => { setMode(mode === "reset" ? "signin" : "reset"); setError(""); setNotice(""); }}>{mode === "reset" ? "back to sign in" : "forgot password?"}</button>
+        </div>}
+    </form>
+  </div></main>;
 }
-
 const s = {
-  page: {
-    minHeight: "100vh",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "24px",
-  },
-  box: {
-    width: "100%",
-    maxWidth: "360px",
-  },
-  logo: {
-    fontSize: "15px",
-    fontWeight: 600,
-    letterSpacing: "0.04em",
-    marginBottom: "4px",
-  },
-  version: {
-    fontSize: "11px",
-    color: "var(--muted)",
-    marginBottom: "40px",
-  },
-  form: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "20px",
-  },
-  field: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-  },
-  label: {
-    fontSize: "11px",
-    color: "var(--muted)",
-    textTransform: "lowercase",
-  },
-  input: {
-    padding: "10px 12px",
-    border: "1px solid var(--border)",
-    fontSize: "13px",
-    width: "100%",
-    outline: "none",
-  },
-  error: {
-    fontSize: "11px",
-    color: "var(--text)",
-    background: "var(--subtle)",
-    padding: "8px 12px",
-    borderLeft: "2px solid #000",
-  },
-  btn: {
-    padding: "11px 16px",
-    background: "#000",
-    color: "#fff",
-    border: "none",
-    fontSize: "13px",
-    textAlign: "left",
-    letterSpacing: "0.02em",
-  },
+  page: { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 },
+  box: { width: "100%", maxWidth: 360 }, logo: { fontSize: 15, fontWeight: 600, letterSpacing: ".04em" },
+  muted: { fontSize: 11, color: "var(--muted)", lineHeight: 1.7 }, form: { display: "flex", flexDirection: "column", gap: 20, marginTop: 32 },
+  label: { fontSize: 11, display: "flex", flexDirection: "column", gap: 6 },
+  input: { padding: "10px 12px", border: "1px solid var(--border)", fontSize: 13, width: "100%" },
+  button: { padding: "11px 16px", background: "#000", color: "#fff", border: 0, fontSize: 13, textAlign: "left" },
   link: { background: "transparent", border: 0, fontSize: 11, color: "var(--muted)", padding: "6px 0" },
+  links: { display: "flex", justifyContent: "space-between", gap: 12 },
 };

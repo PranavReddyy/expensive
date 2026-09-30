@@ -10,11 +10,11 @@ A simple place to see what you have, what you spent, and what people owe you.
 - **Expenses** lets you log purchases, add notes and categories, and browse previous days, weeks, months, or years.
 - **Analytics** shows spending trends and where your money went over time.
 - **Tabs** keeps one running amount per person. Track what they owe you or what you owe them, split a payment, and record when someone pays.
-- **Email sign-in** gives each person their own account and data.
+- **Shared account** uses your email, password, and unique username across our apps. Your expenses stay private to your account.
 
 ## How to use it
 
-1. Enter your email and use the code sent to your inbox to sign in.
+1. Create an account with your email and password, verify your email, and choose your username. Already registered? Sign in with the same email and password.
 2. Create a profile, such as _cash_ or _bank_, and set its current balance.
 3. Use **+ log expense** on Home whenever you spend. The amount comes off that profile's balance. Use Expenses to find past entries.
 4. Open **Tabs → + add amount** for money shared with someone. Search their name, or add it there if they're new. Use **split a payment** for a group, then **record payment** as people settle up.

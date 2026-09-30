@@ -45,3 +45,15 @@ coverage/
 .cache/
 .turbo/
 dist/
+
+# Native app local configuration and Xcode output
+ios/Config/Local.xcconfig
+ios/build/
+ios/DerivedData/
+**/xcuserdata/
+*.xcuserstate
+
+# Firebase local state and downloaded private service account credentials
+.firebase/
+*firebase-adminsdk*.json
+*service-account*.json

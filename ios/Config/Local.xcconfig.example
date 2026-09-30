@@ -1,0 +1,6 @@
+// Copy to Local.xcconfig. These are public client credentials, never a service role key.
+SUPABASE_URL = https:/$()/your-project.supabase.co
+SUPABASE_ANON_KEY = your-publishable-or-anon-key
+FIREBASE_API_KEY = your-firebase-public-web-api-key
+APP_URL = https:/$()/expensive.itsbypranav.com
+IDENTITY_URL = https:/$()/expensive.itsbypranav.com
