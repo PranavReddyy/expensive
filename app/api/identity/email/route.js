@@ -1,4 +1,5 @@
 import { reserveEmailBudget } from '../../../../lib/identity/email-budget.mjs';
+import { brandedActionLink, accountEmail } from '../../../../lib/identity/account-email.mjs';
 import { identityAdmin, verifiedIdentity, corsHeaders, failure } from '../../../../lib/identity/admin';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,12 +32,12 @@ export async function POST(request) {
     let link;
     try { link = kind === 'verify' ? await auth.generateEmailVerificationLink(email, settings) : await auth.generatePasswordResetLink(email, settings); }
     catch (error) { if (kind === 'reset' && error.code === 'auth/user-not-found') return Response.json({ sent: true }, { headers }); throw error; }
-    const title = kind === 'verify' ? 'Verify your email' : 'Reset your password';
+    link = brandedActionLink(link, kind, settings.url);
+    const message = accountEmail(kind, link);
     stage = 'resend';
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST', headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: process.env.AUTH_EMAIL_FROM || 'Expensive <expensive@itsbypranav.com>', to: [email], subject: title,
-        text: `${title} for your shared account:\n\n${link}\n\nIf you did not request this, you can ignore this email.` }),
+      body: JSON.stringify({ from: process.env.AUTH_EMAIL_FROM || 'Expensive <expensive@itsbypranav.com>', to: [email], ...message }),
       signal: AbortSignal.timeout(15000),
     });
     if (!response.ok) {

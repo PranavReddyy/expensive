@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { applyActionCode, verifyPasswordResetCode, confirmPasswordReset, reload } from 'firebase/auth';
 import { firebaseAuth, authMessage } from '../../../lib/firebase-client';
+import { readEmailAction } from '../../../lib/identity/account-email.mjs';
 
 export default function EmailActionPage() {
   const [state, setState] = useState({ mode: '', code: '', message: 'Checking your link…' });
@@ -10,8 +11,8 @@ export default function EmailActionPage() {
   const pending = useRef(null);
   useEffect(() => {
     let active = true;
-    const query = new URLSearchParams(window.location.search);
-    const mode = query.get('mode'), code = query.get('oobCode');
+    const { mode, code } = readEmailAction(window.location.href);
+    window.history.replaceState(window.history.state, '', window.location.pathname);
     // Strict Mode can re-run effects. Consume each one-time email code once.
     pending.current ??= (async () => {
       if (!code) throw new Error('Incomplete link');
