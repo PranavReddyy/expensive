@@ -7,7 +7,7 @@
 
 :root {
   color-scheme: light;
-  --font: 'IBM Plex Mono', 'Courier New', monospace;
+  --font: var(--font-plex), 'Courier New', monospace;
   --bg: #ffffff;
   --text: #000000;
   --muted: #777777;
@@ -36,6 +36,7 @@ button:disabled { opacity:.5; cursor:default; }
 .settings-actions { display:flex; justify-content:space-between; margin-top:22px; }
 .history-note { font-size:11px; color:var(--muted); margin-block:10px; }
 .history-row { padding-block:14px; border-bottom:1px solid var(--border-light); margin-bottom:12px; }
+.startup-status { position:fixed; top:env(safe-area-inset-top,0px); left:50%; transform:translateX(-50%); z-index:300; padding:6px 12px; font-size:10px; white-space:nowrap; background:var(--bg); color:var(--muted); border:1px solid var(--border-light); border-radius:20px; }
 .input-accessory { position:sticky; bottom:12px; margin:12px 0 0 auto; width:fit-content; display:flex; gap:4px; padding:4px; border:1px solid var(--border-light); border-radius:24px; background:var(--subtle); backdrop-filter:blur(18px); box-shadow:0 3px 12px #0002; z-index:2; }
 .input-accessory button { border:0; border-radius:20px; font-size:12px; }
 @media (prefers-reduced-motion:no-preference) { button { transition:background-color .15s,color .15s; } }

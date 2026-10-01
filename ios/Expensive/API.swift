@@ -97,6 +97,13 @@ actor API {
         transport = URLSession(configuration: config)
     }
 
+    // Local display hint only. It never authorizes a request or refreshes a token.
+    func cachedUser() throws -> AuthUser? {
+        guard let saved = try Vault.read(), saved.user.emailConfirmedAt != nil,
+              saved.user.username != nil else { return nil }
+        return saved.user
+    }
+
     func restore() async throws -> AuthUser? {
         session = try Vault.read()
         guard let saved = session else { return nil }

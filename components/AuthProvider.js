@@ -7,6 +7,7 @@ import { supabase } from "../lib/supabase";
 import { AuthContext } from "../lib/auth-context";
 import { resetSession } from "../lib/useAppData";
 import { queryCache } from "../lib/query-cache.mjs";
+import { readPreview, savePreview } from '../lib/startup-preview.mjs';
 
 export default function AuthProvider({ children }) {
   const [auth, setAuth] = useState({ user: null, firebaseUser: null, ready: false, error: "", needsUsername: false });
@@ -20,12 +21,22 @@ export default function AuthProvider({ children }) {
     try {
       firebaseUser = firebaseAuth().currentUser;
       if (identity.current !== (firebaseUser?.uid || null)) {
-        resetSession(); identity.current = firebaseUser?.uid || null;
+        resetSession({ preservePreview: identity.current === null && !!firebaseUser }); identity.current = firebaseUser?.uid || null;
       }
       setAuth({ user: null, firebaseUser, ready: false, error: "", needsUsername: false });
       if (!firebaseUser?.emailVerified) {
+        resetSession();
         if (version === generation.current) setAuth({ user: null, firebaseUser, ready: true, error: "", needsUsername: false });
         return;
+      }
+      let cached;
+      try { cached = readPreview(window.sessionStorage,firebaseUser); } catch {}
+      if (cached) {
+        queryCache.setOwner(cached.id);
+        const ledger = queryCache.entry(JSON.stringify([cached.id,'ledger-v1'])).snapshot.data;
+        if (ledger?.profiles && ledger?.debts && ledger?.people) {
+          setAuth({user:cached,firebaseUser,ready:true,validating:true,error:'',needsUsername:false});
+        }
       }
       // Established users already carry the role set by username enrollment.
       // Bootstrap still validates revocation, verification and ownership.
@@ -33,6 +44,7 @@ export default function AuthProvider({ children }) {
       const profile = tokenResult.claims.role === "authenticated" ? {} : await identityRequest();
       if (version !== generation.current) return;
       if (profile.needsUsername) {
+        resetSession();
         setAuth({ user: null, firebaseUser, ready: true, needsUsername: true, error: "" }); return;
       }
       const token = await firebaseUser.getIdToken();
@@ -40,10 +52,11 @@ export default function AuthProvider({ children }) {
       const user = await response.json();
       if (!response.ok) throw new Error(user.error);
       if (version !== generation.current || firebaseAuth().currentUser?.uid !== firebaseUser.uid) return;
-      await supabase.realtime.setAuth(token);
-      if (version !== generation.current || firebaseAuth().currentUser?.uid !== firebaseUser.uid) return;
       queryCache.setOwner(user.id);
+      try { savePreview(window.sessionStorage,firebaseUser,user); } catch {}
       setAuth({ user, firebaseUser, ready: true, error: "", needsUsername: false });
+      // Realtime setup is not required to render or read via authenticated REST.
+      void supabase.realtime.setAuth(token).catch(() => {});
     } catch (error) {
       if (version === generation.current) {
         resetSession();
@@ -63,7 +76,7 @@ export default function AuthProvider({ children }) {
         } else { void supabase.removeAllChannels(); }
       });
     } catch (error) { setAuth({ user: null, ready: true, error: authMessage(error) }); }
-    const restore = event => { if (event.persisted) window.location.reload(); };
+    const restore = event => { if (event.persisted) void refreshAuth(); };
     window.addEventListener("pageshow", restore);
     return () => { generation.current++; unsubscribe(); tokenUnsubscribe(); window.removeEventListener("pageshow", restore); };
   }, [refreshAuth]);
@@ -76,7 +89,7 @@ export default function AuthProvider({ children }) {
 
   return <AuthContext.Provider value={{ ...auth, refreshAuth }}>
     {pathname === "/" || pathname === "/auth/action" || (auth.ready && auth.user)
-      ? <div key={auth.user?.id || "signed-out"}>{children}</div>
+      ? <>{auth.validating && <div role="status" className="startup-status">saved data · verifying account…</div>}<div key={auth.user?.id || "signed-out"} inert={auth.validating ? true : undefined}>{children}</div></>
       : <div style={{ padding: 24, fontSize: 11 }}>loading…</div>}
   </AuthContext.Provider>;
 }

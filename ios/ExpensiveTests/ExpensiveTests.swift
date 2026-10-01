@@ -4,6 +4,20 @@ import SwiftUI
 @testable import Expensive
 
 final class ExpensiveTests: XCTestCase {
+    @MainActor func testStartupValidationBlocksFinancialReadsAndRefreshes() async throws {
+        let store = AppStore()
+        store.user = AuthUser(id: UUID(), email: "test@example.com", emailConfirmedAt: Date(), username: "test")
+        store.validating = true
+        let revision = store.revision
+        await store.refresh()
+        await store.synchronize()
+        XCTAssertFalse(store.loading)
+        XCTAssertEqual(store.revision, revision)
+        do {
+            _ = try await store.expenses(interval: nil)
+            XCTFail("Preview must not start a financial read")
+        } catch is CancellationError {} catch { XCTFail("Unexpected error: \(error)") }
+    }
     func testSavedOverviewIsOwnerScopedExpiresAndClears() throws {
         let owner = UUID(), other = UUID()
         defer { SavedOverview.clear(owner: owner) }

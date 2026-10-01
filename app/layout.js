@@ -2,6 +2,16 @@ import "./globals.css";
 import AppRuntime from "../components/AppRuntime";
 import AuthProvider from "../components/AuthProvider";
 import Preferences from "../components/Preferences";
+import localFont from 'next/font/local';
+
+const plex = localFont({
+  src: [
+    {path:'../ios/Expensive/Fonts/IBMPlexMono-Regular.ttf',weight:'400'},
+    {path:'../ios/Expensive/Fonts/IBMPlexMono-Medium.ttf',weight:'500'},
+    {path:'../ios/Expensive/Fonts/IBMPlexMono-SemiBold.ttf',weight:'600'},
+  ],
+  variable:'--font-plex', display:'swap', preload:false,
+});
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +46,7 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
+    <html lang="en" className={plex.variable}>
       <head>
         {/* Prevent zoom everywhere — user-scalable=no plus min/max scale */}
         <meta
@@ -46,9 +56,6 @@ export default function RootLayout({ children }) {
 
         {/* Disable tap highlight on iOS */}
         <meta name="format-detection" content="telephone=no" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" />
         <script src="/disable-zoom.js" defer></script>
       </head>
       <body className="bg-white no-zoom"><AuthProvider><Preferences><AppRuntime />{children}</Preferences></AuthProvider></body>

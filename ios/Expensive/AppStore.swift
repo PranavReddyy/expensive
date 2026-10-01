@@ -6,6 +6,7 @@ import Observation
     var authStep: AuthStep = .signIn
     var user: AuthUser?
     var starting = true
+    var validating = false
     var loading = false
     var error: String?
     var profiles: [Profile] = []
@@ -26,15 +27,27 @@ import Observation
     var pay: Decimal { debts.filter { $0.direction == .pay }.reduce(0) { $0 + $1.remainingAmount } }
 
     func bootstrap() async {
-        starting = true; error = nil
-        do { user = try await API.shared.restore(); CurrencyPreference.shared.load(user: user?.id) }
-        catch { handle(error) }
-        if let owner = user?.id {
-            if let saved = SavedOverview.read(owner: owner) {
-                installSnapshot(profiles: saved.profiles, categories: saved.categories, people: saved.people, debts: saved.debts, owner: owner)
+        guard !validating else { return }
+        starting = true; validating = true; error = nil
+        do {
+            if let cachedUser = try await API.shared.cachedUser(), let saved = SavedOverview.read(owner: cachedUser.id) {
+                user = cachedUser
+                CurrencyPreference.shared.load(user: cachedUser.id)
+                installSnapshot(profiles: saved.profiles, categories: saved.categories, people: saved.people, debts: saved.debts, owner: cachedUser.id)
                 cache = (saved.expenses ?? [:]).mapValues { (Date.distantPast, $0) }
                 starting = false
             }
+            let verified = try await API.shared.restore()
+            if verified?.id != user?.id { clearData() }
+            user = verified; validating = false
+            CurrencyPreference.shared.load(user: user?.id)
+            revision += 1
+        } catch {
+            clearData(); user = nil; validating = false
+            handle(error)
+        }
+        if user != nil {
+            starting = false
             await refresh()
         }
         starting = false
@@ -113,7 +126,7 @@ import Observation
         applySelectedLedger()
     }
     func refresh() async {
-        guard let owner = user?.id else { return }
+        guard !validating, let owner = user?.id else { return }
         if loading { refreshAgain = true; return }
         let generation = snapshotGeneration
         loading = true
@@ -151,6 +164,7 @@ import Observation
         expenseKey(interval: interval).flatMap { cache[$0]?.1 }
     }
     func expenses(interval: DateInterval?, force: Bool = false) async throws -> [Expense] {
+        guard !validating else { throw CancellationError() }
         guard let profile = activeId, let owner = user?.id else { return [] }
         guard let key = expenseKey(interval: interval) else { return [] }
         if !force, let (date, rows) = cache[key], Date().timeIntervalSince(date) < 30 { return rows }
@@ -167,6 +181,7 @@ import Observation
         return rows
     }
     func synchronize() async {
+        guard !validating else { return }
         cache = [:]; revision += 1
         await refresh()
     }

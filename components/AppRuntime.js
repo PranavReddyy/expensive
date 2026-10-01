@@ -8,9 +8,9 @@ import { useAuth } from "../lib/auth-context";
 
 export default function AppRuntime() {
   const authenticatedPage = usePathname() !== "/";
-  const { user } = useAuth();
+  const { user, validating } = useAuth();
   useEffect(() => {
-    if (!authenticatedPage || !user) return;
+    if (!authenticatedPage || !user || validating) return;
     let connected = false;
     let interrupted = false;
     const channel = supabase.channel(`app-data:${user.id}`);
@@ -39,6 +39,6 @@ export default function AppRuntime() {
       document.removeEventListener("visibilitychange", visible);
       supabase.removeChannel(channel);
     };
-  }, [authenticatedPage, user?.id]);
+  }, [authenticatedPage, user?.id, validating]);
   return null;
 }

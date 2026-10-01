@@ -11,6 +11,13 @@ import SwiftUI
                     VStack(spacing: 20) { Text("EXPENS***").font(Theme.font(20, weight: .semibold)); ProgressView() }
                 } else if let user = store.user {
                     MainTabs().id(user.id)
+                        .disabled(store.validating)
+                        .safeAreaInset(edge: .top, spacing: 0) {
+                            if store.validating {
+                                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("saved data · verifying account…").font(Theme.font(10)) }
+                                    .frame(maxWidth: .infinity).padding(.vertical, 6).background(Theme.background)
+                            }
+                        }
                 } else {
                     LoginView()
                 }
