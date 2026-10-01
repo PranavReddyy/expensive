@@ -1,6 +1,9 @@
 "use client";
 import { useState, useMemo, memo } from "react";
-import { fmt, fmtWeekday } from "../../lib/format";
+import { fmt, fmtWeekday, currencySymbol } from "../../lib/format";
+import { usePreferences } from "../../components/Preferences";
+import ChartInspector from "../../components/ChartInspector";
+import { periodInsights, projectedBalance } from "../../lib/period-insights.mjs";
 import { useProfiles, useExpenses, usePageState } from "../../lib/useAppData";
 import DataStatus from "../../components/DataStatus";
 import Nav from "../../components/Nav";
@@ -8,10 +11,10 @@ import AccountSwitcher from "../../components/AccountSwitcher";
 import { supabase } from "../../lib/supabase";
 
 const fmtShort = (n) => {
-  if (n >= 10000000) return "₹" + (n / 10000000).toFixed(1) + "Cr";
-  if (n >= 100000) return "₹" + (n / 100000).toFixed(1) + "L";
-  if (n >= 1000) return "₹" + (n / 1000).toFixed(1) + "k";
-  return "₹" + Math.round(n);
+  if (n >= 10000000) return currencySymbol() + (n / 10000000).toFixed(1) + "Cr";
+  if (n >= 100000) return currencySymbol() + (n / 100000).toFixed(1) + "L";
+  if (n >= 1000) return currencySymbol() + (n / 1000).toFixed(1) + "k";
+  return currencySymbol() + Math.round(n);
 };
 
 function getPeriodRange(filter, periodDate = new Date()) {
@@ -280,7 +283,7 @@ const BarChart = memo(function BarChart({ data }) {
               y={y}
               width={barW}
               height={barH}
-              fill="var(--fg, #000)"
+              fill="var(--text)"
             />
             {d.label && (
               <text
@@ -323,12 +326,12 @@ const LineChart = memo(function LineChart({ data }) {
     >
       <defs>
         <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#000" stopOpacity="0.12" />
-          <stop offset="100%" stopColor="#000" stopOpacity="0.01" />
+          <stop offset="0%" stopColor="var(--text)" stopOpacity="0.12" />
+          <stop offset="100%" stopColor="var(--text)" stopOpacity="0.01" />
         </linearGradient>
       </defs>
       <path d={areaPath} fill="url(#areaGrad)" />
-      <path d={linePath} fill="none" stroke="#000" strokeWidth="1.5" />
+      <path d={linePath} fill="none" stroke="var(--text)" strokeWidth="1.5" />
       {data.map((d, i) => {
         if (!d.label) return null;
         const x = pad + (i / (data.length - 1)) * (W - pad * 2);
@@ -356,7 +359,7 @@ const DonutChart = memo(function DonutChart({ data, total }) {
   const cx = 60;
   const cy = 60;
 
-  const COLORS = ["#000", "#555", "#888", "#aaa", "#ccc"];
+  const COLORS = ["var(--text)", "#555", "#888", "#aaa", "#ccc"];
   let cumAngle = -Math.PI / 2;
 
   const slices = data.map(([category, amount], i) => {
@@ -385,9 +388,9 @@ const DonutChart = memo(function DonutChart({ data, total }) {
         style={{ width: 100, height: 100, flexShrink: 0 }}
       >
         {slices.map((sl, i) => (
-          <path key={i} d={sl.path} fill={sl.color} />
+          sl.pct >= 1 ? <circle key={i} cx={cx} cy={cy} r={R} fill={sl.color} /> : <path key={i} d={sl.path} fill={sl.color} />
         ))}
-        <circle cx={cx} cy={cy} r={26} fill="white" />
+        <circle cx={cx} cy={cy} r={26} fill="var(--bg)" />
         <text
           x={cx}
           y={cy - 5}
@@ -472,6 +475,7 @@ const DeltaBadge = memo(function DeltaBadge({ current, prev }) {
 });
 
 export default function AnalyticsPage() {
+  const { currency } = usePreferences();
   const { profiles, activeId, switchProfile, loading, dataError } = useProfiles();
   const [filter, setFilter] = usePageState("analytics:filter", "month");
   const [periodDate, setPeriodDate] = usePageState("analytics:periodDate", () => new Date());
@@ -489,7 +493,7 @@ export default function AnalyticsPage() {
     const currentRange = getPeriodRange(filter, periodDate);
     const filteredExpenses = expenses.filter((e) => {
       const d = new Date(e.created_at);
-      return d >= currentRange.start && d < currentRange.end;
+      return d >= currentRange.start && d < currentRange.end && d <= new Date();
     });
 
     const previousRange = getPeriodRange(
@@ -501,8 +505,9 @@ export default function AnalyticsPage() {
       return d >= previousRange.start && d < previousRange.end;
     });
 
-    const chartData = buildChartData(expenses, filter, periodDate);
-    const cumulData = buildCumulativeData(filteredExpenses, filter, periodDate);
+    const chartData = buildChartData(filteredExpenses, filter, periodDate).map((point,index) => ({...point,detail:filter === 'day' ? `${index}:00` : filter === 'month' ? `${index+1} ${periodDate.toLocaleDateString('en-IN',{month:'short'})}` : point.label}));
+    let cumulative = 0;
+    const cumulData = chartData.map(point => ({...point,value:(cumulative += point.value)}));
 
     const total = filteredExpenses.reduce((s, e) => s + parseFloat(e.amount), 0);
     const prevTotal = prevExpenses.reduce((s, e) => s + parseFloat(e.amount), 0);
@@ -546,7 +551,9 @@ export default function AnalyticsPage() {
   const burnRate =
     daysInfo && daysInfo.elapsed > 0 ? total / daysInfo.elapsed : 0;
   const projected = daysInfo ? burnRate * daysInfo.total : 0;
-  const balanceAfter = active ? active.balance - projected : null;
+  const insights = periodInsights(filteredExpenses,range.start,range.end);
+  const balanceAfter = active ? projectedBalance(active.balance,total,projected) : null;
+  const largestThree = insights.largest;
 
   const filters = ["day", "week", "month", "year"];
   const historicalPeriod = !isCurrentPeriod(periodDate, filter);
@@ -698,9 +705,9 @@ export default function AnalyticsPage() {
                       padding: "3px 7px",
                       border: "1px solid",
                       borderColor:
-                        chartMode === m ? "#000" : "var(--border-light)",
+                        chartMode === m ? "var(--text)" : "var(--border-light)",
                       background: "transparent",
-                      color: chartMode === m ? "#000" : "var(--muted)",
+                      color: chartMode === m ? "var(--text)" : "var(--muted)",
                       fontWeight: chartMode === m ? 600 : 400,
                       cursor: "pointer",
                     }}
@@ -711,14 +718,15 @@ export default function AnalyticsPage() {
               </div>
             </div>
 
+            <ChartInspector key={`${filter}/${periodDate}/${chartMode}`} data={chartMode === 'bar' ? chartData : cumulData}>
             {chartMode === "bar" ? (
-              <BarChart data={chartData} />
-            ) : (filter === "month" || filter === "year") &&
-              cumulData.length > 0 ? (
-              <LineChart data={cumulData} />
+              <BarChart key={currency} data={chartData} />
+            ) : cumulData.length > 0 ? (
+              <LineChart key={currency} data={cumulData} />
             ) : (
               <p style={s.empty}>cumulative view not available for {filter}</p>
             )}
+            </ChartInspector>
 
             <div
               style={{
@@ -739,6 +747,11 @@ export default function AnalyticsPage() {
           </div>
         )}
 
+        <div style={s.section}>
+          <p style={s.sectionLabel}>completed no-spend days · {insights.noSpendDays}</p>
+          <p style={{fontSize:10,color:'var(--muted)'}}>Comparisons use the previous full {filter}. Today is not counted as a completed no-spend day.</p>
+          {largestThree.length > 0 && <><p style={{...s.sectionLabel,marginTop:16}}>largest expenses</p>{largestThree.map(expense => <div key={expense.id} style={{display:'flex',justifyContent:'space-between',gap:12,paddingBlock:8}}><span>{expense.reason}</span><span>{fmt(expense.amount)}</span></div>)}</>}
+        </div>
         {/* Category donut */}
         {topCategories.length > 0 && (
           <div style={s.section}>
@@ -801,7 +814,7 @@ export default function AnalyticsPage() {
                     color: balanceAfter < 0 ? "#c00" : "inherit",
                   }}
                 >
-                  {fmt(active.balance - projected)}
+                  {fmt(balanceAfter)}
                   {balanceAfter < 0 && " (!)"}
                 </span>
               </div>
@@ -841,8 +854,8 @@ const s = {
     cursor: "pointer",
   },
   tabActive: {
-    border: "1px solid #000",
-    color: "#000",
+    border: "1px solid var(--text)",
+    color: "var(--text)",
     background: "var(--subtle)",
     fontWeight: 600,
   },
@@ -858,8 +871,8 @@ const s = {
     cursor: "pointer",
   },
   filterActive: {
-    border: "1px solid #000",
-    color: "#000",
+    border: "1px solid var(--text)",
+    color: "var(--text)",
     background: "var(--subtle)",
     fontWeight: 600,
   },
@@ -934,7 +947,7 @@ const s = {
   calloutDot: {
     width: "6px",
     height: "6px",
-    background: "#000",
+    background: "var(--text)",
     borderRadius: "50%",
     flexShrink: 0,
     marginTop: "4px",
@@ -992,7 +1005,7 @@ const s = {
   bar: { flex: 1, height: "4px", background: "var(--border-light)" },
   barFill: {
     height: "100%",
-    background: "#000",
+    background: "var(--text)",
     minWidth: "2px",
     transition: "width 0.3s",
   },

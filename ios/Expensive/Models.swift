@@ -1,4 +1,49 @@
 import Foundation
+import Observation
+
+// Complete, owner-scoped snapshot. File protection prevents reads while locked;
+// Caches storage is excluded from backups and is disposable at any time.
+struct SavedOverview: Codable {
+    let owner: UUID
+    let savedAt: Date
+    let profiles: [Profile]
+    let categories: [Category]
+    let people: [Person]
+    let debts: [Debt]
+    let expenses: [String: [Expense]]?
+    private static func url(_ owner: UUID) -> URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("overview-v1-\(owner.uuidString).json")
+    }
+    static func read(owner: UUID) -> SavedOverview? {
+        guard let url = url(owner), let data = try? Data(contentsOf: url),
+              let snapshot = try? JSONDecoder().decode(Self.self, from: data), snapshot.owner == owner,
+              (0..<86400).contains(Date().timeIntervalSince(snapshot.savedAt)) else { return nil }
+        return snapshot
+    }
+    func save() {
+        guard let url = Self.url(owner), let data = try? JSONEncoder().encode(self), data.count < 5_000_000 else { return }
+        try? data.write(to: url, options: [.atomic, .completeFileProtection])
+    }
+    static func clear(owner: UUID) { if let url = url(owner) { try? FileManager.default.removeItem(at: url) } }
+}
+
+@MainActor @Observable final class CurrencyPreference {
+    static let shared = CurrencyPreference()
+    static let choices = ["INR", "USD", "EUR", "GBP", "AED", "JPY", "CAD", "AUD"]
+    private var key = "currency.guest"
+    var code = "INR" {
+        didSet { UserDefaults.standard.set(code, forKey: key) }
+    }
+    var symbol: String {
+        ["INR": "₹", "USD": "$", "EUR": "€", "GBP": "£", "AED": "AED", "JPY": "¥", "CAD": "CA$", "AUD": "A$"][code] ?? "₹"
+    }
+    func load(user: UUID?) {
+        key = "currency.\(user?.uuidString ?? "guest")"
+        let saved = UserDefaults.standard.string(forKey: key) ?? "INR"
+        code = Self.choices.contains(saved) ? saved : "INR"
+    }
+}
 
 struct Profile: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
@@ -67,14 +112,18 @@ enum Money {
         return value
     }
 
-    static func format(_ amount: Decimal) -> String {
+    @MainActor private static let formatter: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
         formatter.locale = Locale(identifier: "en_IN")
-        formatter.currencySymbol = "₹"
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
-        return formatter.string(from: amount as NSDecimalNumber) ?? "₹0.00"
+        return formatter
+    }()
+
+    @MainActor static func format(_ amount: Decimal) -> String {
+        formatter.currencySymbol = CurrencyPreference.shared.symbol
+        return formatter.string(from: amount as NSDecimalNumber) ?? "\(CurrencyPreference.shared.symbol)0.00"
     }
 
     static func split(_ total: Decimal, people: Int, includesYou: Bool) throws -> (amounts: [Decimal], own: Decimal) {
@@ -82,7 +131,7 @@ enum Money {
         let pennies = total * 100
         let count = people + (includesYou ? 1 : 0)
         let units = NSDecimalNumber(decimal: pennies).int64Value
-        guard Decimal(units) == pennies, units >= count else { throw AppError.message("Allow at least ₹0.01 for each person.") }
+        guard Decimal(units) == pennies, units >= count else { throw AppError.message("Allow at least 0.01 for each person.") }
         let shares = (0..<count).map { Decimal(units / Int64(count) + (Int64($0) < units % Int64(count) ? 1 : 0)) / 100 }
         return (Array(shares.prefix(people)), includesYou ? shares[count - 1] : 0)
     }
@@ -122,6 +171,29 @@ struct SpendPoint: Identifiable {
 }
 
 enum Insights {
+    struct Summary {
+        let expenses: [Expense]
+        let total: Decimal
+        let elapsedDays: Int
+        let totalDays: Int
+        let completedNoSpendDays: Int
+        let ongoing: Bool
+        var dailyAverage: Decimal { total / Decimal(max(1, elapsedDays)) }
+        var estimate: Decimal? { ongoing && elapsedDays >= 2 && total > 0 ? dailyAverage * Decimal(totalDays) : nil }
+        var largest: [Expense] {
+            Array(expenses.sorted { $0.amount == $1.amount ? $0.createdAt > $1.createdAt : $0.amount > $1.amount }.prefix(3))
+        }
+    }
+    static func summary(_ rows: [Expense], interval: DateInterval, now: Date = .now, calendar: Calendar = .current) -> Summary {
+        let expenses = rows.filter { $0.createdAt >= interval.start && $0.createdAt < interval.end && $0.createdAt <= now }
+        let ongoing = now >= interval.start && now < interval.end
+        let totalDays = max(1, calendar.dateComponents([.day], from: interval.start, to: interval.end).day ?? 1)
+        let completedDays = max(0, calendar.dateComponents([.day], from: interval.start, to: min(calendar.startOfDay(for: now), interval.end)).day ?? 0)
+        let elapsedDays = min(totalDays, completedDays + (ongoing ? 1 : 0))
+        let spentDays = Set(expenses.filter { $0.createdAt < calendar.startOfDay(for: now) }.map { calendar.startOfDay(for: $0.createdAt) }).count
+        return Summary(expenses: expenses, total: expenses.reduce(0) { $0 + $1.amount }, elapsedDays: elapsedDays,
+                       totalDays: totalDays, completedNoSpendDays: max(0, completedDays - spentDays), ongoing: ongoing)
+    }
     static func points(_ expenses: [Expense], interval: DateInterval, unit: Calendar.Component = .day, calendar: Calendar = .current) -> [SpendPoint] {
         var result: [SpendPoint] = []
         var date = interval.start

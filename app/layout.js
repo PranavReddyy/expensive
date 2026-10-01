@@ -1,6 +1,7 @@
 import "./globals.css";
 import AppRuntime from "../components/AppRuntime";
 import AuthProvider from "../components/AuthProvider";
+import Preferences from "../components/Preferences";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +51,7 @@ export default function RootLayout({ children }) {
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&display=swap" />
         <script src="/disable-zoom.js" defer></script>
       </head>
-      <body className="bg-white no-zoom"><AuthProvider><AppRuntime />{children}</AuthProvider></body>
+      <body className="bg-white no-zoom"><AuthProvider><Preferences><AppRuntime />{children}</Preferences></AuthProvider></body>
     </html>
   );
 }

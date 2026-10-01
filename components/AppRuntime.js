@@ -14,7 +14,7 @@ export default function AppRuntime() {
     let connected = false;
     let interrupted = false;
     const channel = supabase.channel(`app-data:${user.id}`);
-    for (const table of ["profiles", "categories", "expenses", "people", "debts"]) {
+    for (const table of ["profiles", "categories", "expenses", "people", "debts", "account_activity"]) {
       channel.on("postgres_changes", { event: "*", schema: "public", table },
         () => queryCache.invalidate([table]));
     }
@@ -29,11 +29,13 @@ export default function AppRuntime() {
       }
     });
     const reconcile = () => queryCache.invalidate();
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') reconcile(); }, 120000);
     const visible = () => { if (document.visibilityState === "visible") reconcile(); };
     window.addEventListener("online", reconcile);
     document.addEventListener("visibilitychange", visible);
     return () => {
       window.removeEventListener("online", reconcile);
+      window.clearInterval(timer);
       document.removeEventListener("visibilitychange", visible);
       supabase.removeChannel(channel);
     };

@@ -7,6 +7,8 @@ import Modal from "../../components/Modal";
 import Nav from "../../components/Nav";
 import AccountSwitcher from "../../components/AccountSwitcher";
 import { supabase } from "../../lib/supabase";
+import { queryCache } from "../../lib/query-cache.mjs";
+import { usePreferences } from "../../components/Preferences";
 
 function getPeriodRange(filter, periodDate = new Date()) {
   if (filter === "all") return null;
@@ -71,6 +73,7 @@ function formatPeriod(periodDate, filter) {
 }
 
 export default function ExpensesPage() {
+  const { currency } = usePreferences();
   const { profiles, activeId, switchProfile, loading, dataError } = useProfiles();
   const [filter, setFilter] = usePageState("expenses:filter", "month");
   const [periodDate, setPeriodDate] = usePageState("expenses:periodDate", () => new Date());
@@ -118,39 +121,14 @@ export default function ExpensesPage() {
       return;
     }
 
-    const { error: e1 } = await supabase
-      .from("expenses")
-      .update({ profile_id: transferTargetId })
-      .eq("id", transferExpense.id);
+    const { error: e1 } = await supabase.rpc('ios_move_expense', {p_id:transferExpense.id,p_from:activeId,p_to:transferTargetId});
     if (e1) {
       setTErr(e1.message);
       setTransferring(false);
       return;
     }
 
-    const { error: e2 } = await supabase
-      .from("profiles")
-      .update({
-        balance: (active?.balance || 0) + parseFloat(transferExpense.amount),
-      })
-      .eq("id", activeId);
-    if (e2) {
-      setTErr(e2.message);
-      setTransferring(false);
-      return;
-    }
-
-    const { error: e3 } = await supabase
-      .from("profiles")
-      .update({
-        balance: (target.balance || 0) - parseFloat(transferExpense.amount),
-      })
-      .eq("id", transferTargetId);
-    if (e3) {
-      setTErr(e3.message);
-      setTransferring(false);
-      return;
-    }
+    queryCache.invalidate(['profiles','expenses']);
 
     setTransferExpense(null);
     setTransferTargetId("");
@@ -159,11 +137,9 @@ export default function ExpensesPage() {
 
   const deleteExpense = useCallback(async (exp) => {
     if (!confirm(`delete "${exp.reason}"?`)) return;
-    await supabase
-      .from("profiles")
-      .update({ balance: (active?.balance || 0) + parseFloat(exp.amount) })
-      .eq("id", activeId);
-    await supabase.from("expenses").delete().eq("id", exp.id);
+    const { error } = await supabase.rpc('ios_delete_expense',{p_id:exp.id});
+    if (error) { alert(error.message); return; }
+    queryCache.invalidate(['profiles','expenses']);
   }, [active, activeId, filter, periodDate]);
 
   const timeFilters = ["day", "week", "month", "year", "all"];
@@ -233,7 +209,7 @@ export default function ExpensesPage() {
                   </button>
                 </div>
               </div>
-            )), [visibleExpenses, otherProfiles, deleteExpense]);
+            )), [visibleExpenses, otherProfiles, deleteExpense, currency]);
 
   if (loading || (dataError && !profiles.length)) return <DataStatus error={dataError} />;
 
@@ -433,8 +409,8 @@ const s = {
     cursor: "pointer",
   },
   tabActive: {
-    border: "1px solid #000",
-    color: "#000",
+    border: "1px solid var(--text)",
+    color: "var(--text)",
     background: "var(--subtle)",
     fontWeight: 600,
   },
@@ -449,8 +425,8 @@ const s = {
     cursor: "pointer",
   },
   filterActive: {
-    border: "1px solid #000",
-    color: "#000",
+    border: "1px solid var(--text)",
+    color: "var(--text)",
     background: "var(--subtle)",
     fontWeight: 600,
   },
@@ -500,8 +476,8 @@ const s = {
     cursor: "pointer",
   },
   catFilterActive: {
-    border: "1px solid #000",
-    color: "#000",
+    border: "1px solid var(--text)",
+    color: "var(--text)",
     background: "var(--subtle)",
     fontWeight: 600,
   },
@@ -565,18 +541,18 @@ const s = {
     zIndex: 200,
   },
   modal: {
-    background: "#fff",
+    background: "var(--bg)",
     width: "100%",
     maxWidth: "480px",
     padding: "24px 20px 32px",
-    borderTop: "1px solid #000",
+    borderTop: "1px solid var(--text)",
   },
   modalTitle: { fontSize: "13px", fontWeight: 600, marginBottom: "16px" },
   transferInfo: {
     background: "var(--subtle)",
     padding: "12px",
     marginBottom: "16px",
-    borderLeft: "2px solid #000",
+    borderLeft: "2px solid var(--text)",
   },
   mLabel: { fontSize: "11px", color: "var(--muted)" },
   profileOption: {
@@ -592,7 +568,7 @@ const s = {
     cursor: "pointer",
   },
   profileOptionActive: {
-    border: "1px solid #000",
+    border: "1px solid var(--text)",
     background: "var(--subtle)",
     fontWeight: 600,
   },
@@ -601,7 +577,7 @@ const s = {
     background: "var(--subtle)",
     padding: "7px 10px",
     marginBottom: "12px",
-    borderLeft: "2px solid #000",
+    borderLeft: "2px solid var(--text)",
   },
   mBtns: { display: "flex", gap: "8px", marginTop: "8px" },
   mCancel: {
@@ -617,8 +593,8 @@ const s = {
     flex: 2,
     padding: "10px",
     border: "none",
-    background: "#000",
-    color: "#fff",
+    background: "var(--text)",
+    color: "var(--bg)",
     fontSize: "13px",
     cursor: "pointer",
   },

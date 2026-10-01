@@ -1,9 +1,11 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
+import ActivityHistory from "../../components/ActivityHistory";
+import { usePreferences } from "../../components/Preferences";
 import { useProfiles, usePeople, useDebts } from "../../lib/useAppData";
 import { summarizeTabs, splitAmount } from "../../lib/tabs.mjs";
 import { queryCache } from "../../lib/query-cache.mjs";
-import { fmt } from "../../lib/format";
+import { fmt, currencySymbol } from "../../lib/format";
 import { supabase } from "../../lib/supabase";
 import Modal from "../../components/Modal";
 import DataStatus from "../../components/DataStatus";
@@ -11,6 +13,9 @@ import Nav from "../../components/Nav";
 import AccountSwitcher from "../../components/AccountSwitcher";
 
 export default function TabsPage() {
+  usePreferences();
+  const [history, setHistory] = useState(false);
+  const request = useRef(null);
   const { profiles, activeId, switchProfile, loading, dataError } = useProfiles();
   const people = usePeople(activeId), debts = useDebts(activeId);
   const totals = useMemo(() => summarizeTabs(debts), [debts]);
@@ -32,6 +37,7 @@ export default function TabsPage() {
   const [error, setError] = useState("");
   const allPeople = [...people, ...extraPeople.filter(p => !people.some(x => x.id === p.id))];
   function open(type, p) {
+    request.current = null;
     setModal(type); setError(""); setQuery(""); setSelected([]); setAmount("");
     setDescription(""); setIncludesYou(true); setDirection("they_owe_me");
     if (p) {
@@ -57,19 +63,24 @@ export default function TabsPage() {
       let result;
       if (modal === "settle") {
         if (!/^\d+(\.\d{1,2})?$/.test(amount)) throw new Error("Enter an amount with up to two decimals.");
-        result = await supabase.rpc("settle_tab", { p_profile: activeId, p_person: person.id,
+        const signature = JSON.stringify([activeId,person.id,amount,person.collect,person.pay]);
+        if (request.current?.signature !== signature) request.current = { signature, id: crypto.randomUUID() };
+        result = await supabase.rpc("record_tab_payment", { p_id:request.current.id, p_profile: activeId, p_person: person.id,
           p_payment: Number(amount), p_expected_collect: person.collect/100, p_expected_pay: person.pay/100 });
       } else {
         if (!selected.length) throw new Error("Search for a person or add a new name.");
         if (!description.trim()) throw new Error("Add what this is for.");
         if (!/^\d+(\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) throw new Error("Enter an amount with up to two decimals.");
         const split = modal === "split" ? splitAmount(amount, selected.length, includesYou) : { amounts: [Number(amount)], ownShare: 0 };
-        result = await supabase.rpc("add_tab", { p_profile: activeId, p_own_share: split.ownShare,
+        const payload = { p_profile: activeId, p_own_share: split.ownShare,
           p_rows: selected.map((id,i) => ({ person_id: id, amount: split.amounts[i],
-            direction: modal === "split" ? "they_owe_me" : direction, description: description.trim() })) });
+            direction: modal === "split" ? "they_owe_me" : direction, description: description.trim() })) };
+        const signature = JSON.stringify(payload);
+        if (request.current?.signature !== signature) request.current = {signature,id:crypto.randomUUID()};
+        result = await supabase.rpc('ios_add_tabs',{...payload,p_id:request.current.id});
       }
       if (result.error) throw result.error;
-      queryCache.invalidate(["profiles","debts","expenses","people"]); setModal(null);
+      queryCache.invalidate(["profiles","debts","expenses","people","account_activity"]); request.current = null; setModal(null);
     } catch(e) { setError(e.message); } finally { setBusy(false); }
   }
   let preview;
@@ -101,9 +112,10 @@ export default function TabsPage() {
       <div style={s.balance}><p style={s.muted}>current balance</p><p style={s.big}>{fmt(active.balance)}</p>
         <p style={s.muted}>owed to you {fmt(totals.collect)} · you owe {fmt(totals.pay)}</p>
         <p style={s.muted}>after settlement {fmt(Number(active.balance)+totals.collect-totals.pay)}</p></div>
-      <div style={s.actions}>
-        <button type="button" style={s.button} onClick={() => open("add")}>+ add amount</button>
-        <button type="button" style={s.button} onClick={() => open("split")}>split a payment</button>
+      <div className="tab-actions">
+        <button type="button" style={s.button} aria-label="Activity and undo payments" onClick={() => setHistory(true)}>↶</button>
+        <button type="button" className="primary-action" style={{flex:1,whiteSpace:'nowrap'}} onClick={() => open("add")}>+ add amount</button>
+        <button type="button" style={s.button} onClick={() => open("split")}>split</button>
         <button type="button" style={{ ...s.button, ...(tabDirection !== "all" || sortHighToLow ? s.active : {}) }}
           onClick={() => setFiltersOpen(open => !open)} aria-expanded={filtersOpen} aria-controls="tab-filters">
           filter{tabDirection !== "all" || sortHighToLow ? " ·" : ""}
@@ -145,14 +157,14 @@ export default function TabsPage() {
         <p style={s.muted}>net remaining {fmt(Math.abs(person.collect-person.pay)/100)}</p>
         {person.collect > 0 && person.pay > 0 && <p style={s.muted}>{fmt(Math.min(person.collect,person.pay)/100)} cancels out in both directions when confirmed.</p>}
         <details style={{margin:"10px 0"}}><summary style={s.muted}>view entries</summary>{person.entries.map(d => <p style={s.muted} key={d.id}>{d.description} · {d.direction === "they_owe_me" ? "owed to you" : "you owe"} {fmt(d.remaining_amount)}</p>)}</details></>}
-      <label style={s.muted}>{modal === "split" ? "total you paid (₹)" : "amount (₹)"}</label>
+      <label style={s.muted}>{modal === "split" ? 'total you paid' : 'amount'} ({currencySymbol()})</label>
       <input style={s.input} inputMode="decimal" aria-label="Amount" value={amount} onChange={e => setAmount(e.target.value)} />
       {modal === "split" && <><label style={s.muted}><input type="checkbox" style={{appearance:"auto",marginRight:8}} checked={includesYou} onChange={e => setIncludesYou(e.target.checked)} />include my share</label>
         {preview && <div style={{marginTop:8}}>{selected.map((id,i) => <p style={s.muted} key={id}>{allPeople.find(p => p.id === id)?.name}: {fmt(preview.amounts[i])}</p>)}{includesYou && <p style={s.muted}>your expense: {fmt(preview.ownShare)}</p>}</div>}</>}
       <p style={{...s.muted,marginTop:10}}>{modal === "split" ? "The full payment leaves your balance. Only your share is logged as an expense." : modal === "add" ? direction === "they_owe_me" ? "This amount leaves your balance now." : "Your balance changes when you record payment." : person.collect < person.pay ? "This payment leaves your balance and is logged as an expense." : person.collect > person.pay ? "This payment is added to your balance." : "Your balance stays the same."}</p>
       {error && <p role="alert" style={{color:"#b00",fontSize:11}}>{error}</p>}
       <div style={{...s.actions,marginTop:16}}><button type="button" style={s.button} disabled={busy} onClick={close}>cancel</button><button type="submit" style={{...s.button,...s.active}} disabled={busy}>{busy ? "saving…" : modal === "settle" ? "confirm" : "save"}</button></div>
-    </Modal>}<Nav />
+    </Modal>}{history && active && <ActivityHistory key={active.id} profile={active} onClose={() => setHistory(false)} />}<Nav />
   </div>;
 }
 const s = {
@@ -162,14 +174,14 @@ const s = {
   filterPanel:{border:"1px solid var(--border-light)",padding:10,marginBottom:12},
   filterGroup:{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8},
   button:{border:"1px solid var(--border-light)",background:"transparent",color:"var(--text)",padding:"7px 10px",fontSize:11},
-  active:{borderColor:"#000",background:"var(--subtle)",fontWeight:600},
+  active:{borderColor:"var(--text)",background:"var(--subtle)",fontWeight:600},
   balance:{border:"1px solid var(--border-light)",padding:14,marginBottom:14},
   big:{fontSize:28,fontWeight:600,marginBottom:8},
   muted:{fontSize:11,color:"var(--muted)",lineHeight:1.7},
   input:{width:"100%",border:"1px solid var(--border-light)",padding:10,marginBottom:10},
   row:{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid var(--border-light)"},
   name:{fontSize:13,fontWeight:500,overflowWrap:"anywhere"},
-  modal:{background:"#fff",width:"100%",maxWidth:480,padding:20},
+  modal:{background:"var(--bg)",width:"100%",maxWidth:480,padding:20},
   results:{maxHeight:180,overflowY:"auto",marginBottom:12,border:"1px solid var(--border-light)"},
   result:{display:"block",width:"100%",textAlign:"left",padding:10,border:0,background:"transparent",color:"var(--text)"},
 };

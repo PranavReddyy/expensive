@@ -1,5 +1,6 @@
 import SwiftUI
 import Observation
+import Charts
 
 @MainActor @Observable final class ExpenseLoader {
     var rows: [Expense] = []
@@ -8,8 +9,8 @@ import Observation
     private var dataKey = ""
     private var request = UUID()
     func load(_ store: AppStore, interval: DateInterval?) async {
-        let key = "\(store.activeId?.uuidString ?? "")/\(interval?.start.timeIntervalSince1970 ?? 0)/\(interval?.end.timeIntervalSince1970 ?? 0)"
-        if key != dataKey { rows = []; dataKey = key }
+        let key = "\(store.user?.id.uuidString ?? "")/\(store.activeId?.uuidString ?? "")/\(interval?.start.timeIntervalSince1970 ?? 0)/\(interval?.end.timeIntervalSince1970 ?? 0)"
+        if key != dataKey { rows = store.cachedExpenses(interval: interval) ?? []; dataKey = key }
         let current = UUID(); request = current
         loading = true; error = nil
         defer { if request == current { loading = false } }
@@ -31,7 +32,7 @@ struct HomeView: View {
     @Environment(AppStore.self) private var store
     @State private var loader = ExpenseLoader()
     @State private var sheet: HomeSheet?
-    @State private var logout = false
+    @State private var accountSettings = false
     private var now: Date { Date() }
     private var month: DateInterval { Calendar.current.dateInterval(of: .month, for: now)! }
     private var week: DateInterval {
@@ -47,54 +48,127 @@ struct HomeView: View {
             if store.active != nil {
                 BalanceBlock(edit: { sheet = .balance })
                 HStack {
-                    Button("+ log expense") { sheet = .expense }.buttonStyle(.glassProminent)
-                    Spacer()
-                    if store.profiles.count > 1 { Button("transfer money") { sheet = .transfer }.buttonStyle(.glass) }
+                    Button { sheet = .expense } label: { Text("+ log expense").frame(maxWidth: .infinity) }.buttonStyle(PrimaryActionStyle())
+                    if store.profiles.count > 1 { Button("transfer") { sheet = .transfer }.buttonStyle(.glass).accessibilityLabel("Transfer money between profiles") }
                 }.font(Theme.font(12)).controlSize(.large)
+                Divider()
                 VStack(alignment: .leading, spacing: 18) {
-                    SectionLabel("spending · \(now.formatted(.dateTime.month(.wide)))")
                     if loader.loading && loader.rows.isEmpty { ProgressView().frame(maxWidth: .infinity) }
-                    else {
-                        HStack(spacing: 10) {
-                            Stat(label: "spent today", value: Money.format(monthly.filter { Calendar.current.isDateInToday($0.createdAt) }.reduce(0) { $0 + $1.amount }))
-                            Stat(label: "this month", value: Money.format(monthly.reduce(0) { $0 + $1.amount }))
-                        }
-                        SectionLabel("last 7 days")
-                        SpendingChart(points: Insights.points(loader.rows.filter { $0.createdAt <= now }, interval: week), height: 120)
-                        let categories = Insights.categories(monthly)
-                        if !categories.isEmpty {
-                            SectionLabel("top categories this month")
-                            ForEach(Array(categories.prefix(3)), id: \.name) { category in
-                                HStack { Text(category.name); Spacer(); Text(Money.format(category.amount)).monospacedDigit() }.font(Theme.font(12))
-                            }
-                        } else { Text("No expenses this month yet.").foregroundStyle(.secondary).font(Theme.font(12)) }
+                    else if loader.error == nil || !loader.rows.isEmpty {
+                        HomeSpendingSummary(today: monthly.filter { Calendar.current.isDateInToday($0.createdAt) }.reduce(0) { $0 + $1.amount },
+                                            month: monthly.reduce(0) { $0 + $1.amount },
+                                            points: Insights.points(loader.rows.filter { $0.createdAt <= now }, interval: week))
                     }
                     if let error = loader.error { ErrorNotice(message: error, retry: { Task { await loader.load(store, interval: range) } }) }
                 }
             } else if store.loading { ProgressView() }
             else {
                 EmptyState(title: "your first account", detail: "Create a profile for your cash, bank account, or any other pool of money.")
-                Button("+ create profile") { sheet = .profile }.buttonStyle(.glassProminent).controlSize(.large)
-            }
-            if let email = store.user?.email {
-                Text((store.user?.username.map { "@\($0) · " } ?? "") + email)
-                    .font(Theme.font(10)).foregroundStyle(.secondary).textSelection(.enabled)
+                Button("+ create profile") { sheet = .profile }.buttonStyle(PrimaryActionStyle()).controlSize(.large)
             }
         }
         .pageTitle("EXPENS***")
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) { Button { logout = true } label: { Image(systemName: "rectangle.portrait.and.arrow.right") }.accessibilityLabel("Sign out") }
+            ToolbarItem(placement: .topBarLeading) {
+                Button { accountSettings = true } label: { Image(systemName: "person.crop.circle") }
+                    .accessibilityLabel("Your account")
+            }
             ToolbarItem(placement: .topBarTrailing) { Button { sheet = .profile } label: { Image(systemName: "plus") }.accessibilityLabel("New profile") }
-        }
-        .confirmationDialog("Sign out of this account?", isPresented: $logout, titleVisibility: .visible) {
-            Button("sign out", role: .destructive) { Task { do { try await store.logout() } catch { store.handle(error) } } }
         }
         .sheet(item: $sheet) { type in
             if type == .expense, let profile = store.active { ExpenseForm(profile: profile) }
             else { AccountForm(kind: type, profile: store.active) }
         }
+        .sheet(isPresented: $accountSettings) { AccountSettingsView() }
         .refreshable { await store.synchronize() }
         .task(id: "\(store.activeId?.uuidString ?? "")-\(store.revision)-\(range.start)") { await loader.load(store, interval: range) }
+    }
+}
+
+struct AccountSettingsView: View {
+    @AppStorage("appearance") private var appearance = AppAppearance.system.rawValue
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmLogout = false
+    @Bindable private var currency = CurrencyPreference.shared
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("account details") {
+                    if let username = store.user?.username { detail("username", "@\(username)") }
+                    if let email = store.user?.email { detail("email", email) }
+                }
+                Section("appearance") {
+                    Picker("theme", selection: $appearance) {
+                        ForEach(AppAppearance.allCases, id: \.rawValue) { Text($0.rawValue).tag($0.rawValue) }
+                    }.pickerStyle(.segmented)
+                }
+                Section {
+                    Picker("preferred currency", selection: $currency.code) {
+                        ForEach(CurrencyPreference.choices, id: \.self) { Text($0).tag($0) }
+                    }
+                } footer: {
+                    Text("Display symbol only. Amounts are not converted. Saved for your account on this device.")
+                }
+                Section { Button("sign out", role: .destructive) { confirmLogout = true } }
+                if let error = store.error { Text(error).font(Theme.font(11)) }
+            }.font(Theme.font()).scrollContentBackground(.hidden).background(Theme.background)
+                .navigationTitle("your account").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("done") { dismiss() } } }
+                .confirmationDialog("Sign out of this account?", isPresented: $confirmLogout, titleVisibility: .visible) {
+                    Button("sign out", role: .destructive) {
+                        Task { do { try await store.logout(); dismiss() } catch { store.handle(error) } }
+                    }
+                }
+        }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+    }
+    private func detail(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(label)
+            Text(value).font(Theme.font(12)).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+        }.padding(.vertical, 4)
+    }
+}
+
+
+struct HomeSpendingSummary: View {
+    let today: Decimal
+    let month: Decimal
+    let points: [SpendPoint]
+    private var weekTotal: Decimal { points.reduce(0) { $0 + $1.amount } }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            HStack(alignment: .top, spacing: 20) {
+                metric("spent today", today)
+                metric("this month", month)
+            }
+            if weekTotal > 0 {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack { SectionLabel("last 7 days"); Spacer(); Text(Money.format(weekTotal)).font(Theme.font(11)).monospacedDigit() }
+                    Chart(points) { point in
+                        BarMark(x: .value("Day", point.date, unit: .day), y: .value("Spent", NSDecimalNumber(decimal: point.amount).doubleValue))
+                            .foregroundStyle(Calendar.current.isDateInToday(point.date) ? Theme.ink : Theme.ink.opacity(0.2))
+                            .cornerRadius(3)
+                            .accessibilityLabel(point.date.formatted(.dateTime.weekday().day().month()))
+                            .accessibilityValue(Money.format(point.amount))
+                    }.chartXAxis(.hidden).chartYAxis(.hidden).frame(height: 64)
+                    HStack {
+                        Text(points.first?.date.formatted(.dateTime.day().month(.abbreviated)) ?? "")
+                        Spacer(); Text("today")
+                    }.font(Theme.font(10)).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("No spending in the last 7 days.").font(Theme.font(11)).foregroundStyle(.secondary)
+            }
+        }
+    }
+    private func metric(_ label: String, _ amount: Decimal) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(label)
+            Text(Money.format(amount)).font(Theme.font(20, weight: .medium, relativeTo: .title2))
+                .monospacedDigit().lineLimit(1).minimumScaleFactor(0.6)
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -173,7 +247,8 @@ struct AnalyticsView: View {
     private var interval: DateInterval { period.interval(containing: anchor)! }
     private var previous: DateInterval { period.interval(containing: period.shifted(anchor, by: -1))! }
     private var range: DateInterval { DateInterval(start: previous.start, end: interval.end) }
-    private var current: [Expense] { loader.rows.filter { $0.createdAt >= interval.start && $0.createdAt < interval.end } }
+    private var summary: Insights.Summary { Insights.summary(loader.rows, interval: interval) }
+    private var current: [Expense] { summary.expenses }
     private var total: Decimal { current.reduce(0) { $0 + $1.amount } }
     private var previousTotal: Decimal { loader.rows.filter { $0.createdAt >= previous.start && $0.createdAt < previous.end }.reduce(0) { $0 + $1.amount } }
     private var unit: Calendar.Component { period == .day ? .hour : period == .year ? .month : .day }
@@ -185,28 +260,61 @@ struct AnalyticsView: View {
                 PeriodPicker(period: $period, anchor: $anchor, allowAll: false)
                 if let error = loader.error { ErrorNotice(message: error, retry: { Task { await loader.load(store, interval: range) } }) }
                 if loader.loading && loader.rows.isEmpty { ProgressView() }
-                else {
-                    HStack(spacing: 10) { Stat(label: "total spent", value: Money.format(total)); Stat(label: "expenses", value: "\(current.count)") }
+                else if loader.error == nil || !loader.rows.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                    HStack { SectionLabel("total spent"); Spacer(); Text("\(current.count) expenses").font(Theme.font(11)).foregroundStyle(.secondary) }
+                    Text(Money.format(total)).font(Theme.font(34, weight: .medium, relativeTo: .largeTitle))
+                        .monospacedDigit().lineLimit(1).minimumScaleFactor(0.5)
                     if previousTotal > 0 {
                         let change = NSDecimalNumber(decimal: (total - previousTotal) / previousTotal * 100).doubleValue
-                        Text(String(format: "%+.0f%%", change) + " vs previous \(period.rawValue)").foregroundStyle(.secondary).font(Theme.font(11))
+                        Text(String(format: "%+.0f%%", change) + " vs previous full \(period.rawValue)").foregroundStyle(.secondary).font(Theme.font(11))
                     } else { Text("Previous \(period.rawValue): \(Money.format(previousTotal))").font(Theme.font(11)).foregroundStyle(.secondary) }
+                    if previousTotal > 0 { Text("previously \(Money.format(previousTotal))").font(Theme.font(10)).foregroundStyle(.secondary) }
+                    }.padding(20).frame(maxWidth: .infinity, alignment: .leading).overlay(Rectangle().stroke(Theme.ink.opacity(0.15)))
                     if current.isEmpty { EmptyState(title: "no spending this period", detail: "Use the arrows to look through previous periods.") }
                     else {
                         Picker("Chart", selection: $cumulative) { Text("spending").tag(false); Text("cumulative").tag(true) }.pickerStyle(.segmented)
-                        SpendingChart(points: Insights.points(current, interval: interval, unit: unit), cumulative: cumulative, unit: unit, height: 190)
+                        SpendingChart(points: Insights.points(current, interval: interval, unit: unit).filter { $0.date <= Date() }, cumulative: cumulative, unit: unit, height: 190, interactive: true)
+                            .id("\(store.activeId?.uuidString ?? "")/\(period)/\(anchor)")
                         HStack(spacing: 10) {
                             Stat(label: "per expense", value: Money.format(total / Decimal(current.count)))
-                            Stat(label: "largest", value: Money.format(current.map(\.amount).max() ?? 0))
+                            Stat(label: "daily average", value: Money.format(summary.dailyAverage))
+                        }
+                        if period != .day {
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack {
+                                    SectionLabel("\(summary.elapsedDays) of \(summary.totalDays) days")
+                                    Spacer()
+                                    Text("\(summary.completedNoSpendDays) no-spend days").font(Theme.font(11))
+                                }
+                                ProgressView(value: Double(summary.elapsedDays), total: Double(summary.totalDays)).tint(Theme.ink)
+                                if let estimate = summary.estimate {
+                                    HStack { SectionLabel("estimated \(period.rawValue) total"); Spacer(); Text(Money.format(estimate)).font(Theme.font(14, weight: .medium)).monospacedDigit() }
+                                    Text("Based on your pace so far. Actual spending may differ.").font(Theme.font(10)).foregroundStyle(.secondary)
+                                }
+                                Text("Daily average includes today; no-spend days count completed days only.").font(Theme.font(10)).foregroundStyle(.secondary)
+                            }.padding(.vertical, 8)
                         }
                         VStack(alignment: .leading, spacing: 16) {
                             SectionLabel("categories")
                             ForEach(Insights.categories(current), id: \.name) { category in
+                                let share: Decimal = total > 0 ? category.amount / total : 0
                                 VStack(spacing: 8) {
-                                    HStack { Text(category.name); Spacer(); Text(Money.format(category.amount)) }.font(Theme.font(12))
-                                    GeometryReader { geo in Rectangle().fill(.black).frame(width: geo.size.width * CGFloat(NSDecimalNumber(decimal: category.amount / max(1, total)).doubleValue)) }.frame(height: 3).background(Color.black.opacity(0.07))
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(category.name); Spacer()
+                                        VStack(alignment: .trailing, spacing: 4) {
+                                            Text(Money.format(category.amount))
+                                            Text(String(format: "%.0f%%", NSDecimalNumber(decimal: share * 100).doubleValue)).font(Theme.font(10)).foregroundStyle(.secondary)
+                                        }
+                                    }.font(Theme.font(12))
+                                    GeometryReader { geo in Rectangle().fill(Theme.ink).frame(width: geo.size.width * CGFloat(NSDecimalNumber(decimal: share).doubleValue)) }.frame(height: 3).background(Theme.ink.opacity(0.07))
                                 }
                             }
+                        }
+                        Divider()
+                        VStack(alignment: .leading, spacing: 0) {
+                            SectionLabel("largest expenses").padding(.bottom, 4)
+                            ForEach(summary.largest) { expense in ExpenseRow(expense: expense) }
                         }
                     }
                 }

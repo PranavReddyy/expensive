@@ -9,6 +9,50 @@ function deferred() {
 }
 const tick = () => new Promise((done) => setImmediate(done));
 
+function memoryStorage() {
+  const values = new Map();
+  return { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+}
+
+test('session snapshots hydrate only their owner and revalidate without blanking data', async () => {
+  const storage = memoryStorage();
+  const cache = createQueryCache({ storage });
+  cache.setOwner('alice');
+  const key = JSON.stringify(['alice', 'profiles']);
+  await cache.load(query(cache, key, ['profiles'], async () => [100]));
+  const restored = createQueryCache({ storage });
+  restored.setOwner('alice');
+  const item = query(restored, key, ['profiles'], async () => [200]);
+  assert.deepEqual(item.snapshot.data, [100]);
+  assert.equal(item.dirty, true);
+  const loading = restored.load(item);
+  assert.deepEqual(item.snapshot.data, [100]);
+  await loading;
+  assert.deepEqual(item.snapshot.data, [200]);
+  restored.setOwner('bob');
+  assert.equal(restored.entry(key).snapshot, EMPTY_QUERY);
+  assert.equal(storage.getItem('expensive.snapshot.v1:alice'), undefined);
+});
+
+test('expired snapshots, logout and money invalidation cannot resurrect persisted balances', async () => {
+  const storage = memoryStorage();
+  const key = JSON.stringify(['alice', 'profiles']);
+  const cache = createQueryCache({ storage, now: () => 100 });
+  cache.setOwner('alice');
+  const item = query(cache, key, ['profiles'], async () => [100]);
+  await cache.load(item);
+  const expired = createQueryCache({ storage, now: () => 3_600_101 });
+  expired.setOwner('alice');
+  assert.equal(expired.entry(key).snapshot, EMPTY_QUERY);
+  cache.invalidate(['profiles']);
+  await cache.load(item);
+  cache.invalidate(['profiles']);
+  assert.equal(storage.getItem('expensive.snapshot.v1:alice'), undefined);
+  await cache.load(item);
+  cache.clear();
+  assert.equal(storage.getItem('expensive.snapshot.v1:alice'), undefined);
+});
+
 function query(cache, key, tables, fetcher) {
   const item = cache.entry(key, tables);
   item.fetcher = fetcher;

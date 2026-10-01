@@ -1,9 +1,9 @@
 "use client";
 
-import { useId, useLayoutEffect, useRef } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-const editable = 'input:not([type="checkbox"]):not([type="hidden"]):not(:disabled), textarea:not(:disabled), select:not(:disabled)';
+const editable = 'input:not([type="checkbox"]):not([type="hidden"]):not([type="radio"]):not(:disabled), textarea:not(:disabled)';
 const focusable = 'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]';
 
 export default function Modal({ children, title, onClose, onSubmit, onError, busy, style, overlayStyle }) {
@@ -11,6 +11,17 @@ export default function Modal({ children, title, onClose, onSubmit, onError, bus
   const overlay = useRef(null);
   const submitting = useRef(false);
   const titleId = useId();
+  const [editing, setEditing] = useState(false);
+  const [hasNext, setHasNext] = useState(false);
+  function inputState() {
+    const fields = [...(panel.current?.querySelectorAll(editable) || [])].filter(field => field.getClientRects().length);
+    const index = fields.indexOf(document.activeElement);
+    setEditing(index >= 0); setHasNext(index >= 0 && index < fields.length-1);
+  }
+  function nextInput() {
+    const fields = [...panel.current.querySelectorAll(editable)].filter(field => field.getClientRects().length);
+    fields[fields.indexOf(document.activeElement)+1]?.focus({preventScroll:true}); keepInputVisible();
+  }
 
   function keepInputVisible() {
     const field = document.activeElement;
@@ -86,7 +97,7 @@ export default function Modal({ children, title, onClose, onSubmit, onError, bus
       const fields = [...panel.current.querySelectorAll(editable)];
       const next = fields[fields.indexOf(event.target) + 1];
       if (next) next.focus({ preventScroll: true });
-      else panel.current.requestSubmit();
+      else event.target.blur();
       keepInputVisible();
     }
   }
@@ -99,9 +110,13 @@ export default function Modal({ children, title, onClose, onSubmit, onError, bus
       }}>
       <form ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
         className="popup-panel" style={style} onSubmit={submit} onKeyDown={handleKeyDown}
-        onFocusCapture={keepInputVisible}>
+        onFocusCapture={() => { keepInputVisible(); inputState(); }} onBlurCapture={() => queueMicrotask(inputState)}>
         <span id={titleId} className="sr-only">{title}</span>
         {children}
+        {editing && <div className="input-accessory" aria-label="Input navigation" onPointerDown={event => event.preventDefault()}>
+          <button type="button" disabled={!hasNext || busy} onClick={nextInput}>next</button>
+          <button type="button" onClick={() => document.activeElement?.blur()}>done</button>
+        </div>}
       </form>
     </div>, document.body,
   );

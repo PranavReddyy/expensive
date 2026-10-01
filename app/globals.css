@@ -6,6 +6,7 @@
 }
 
 :root {
+  color-scheme: light;
   --font: 'IBM Plex Mono', 'Courier New', monospace;
   --bg: #ffffff;
   --text: #000000;
@@ -15,6 +16,29 @@
   --subtle: #f7f7f7;
   --nav-h: 52px;
 }
+
+:root[data-appearance="dark"] { color-scheme:dark; --bg:#111; --text:#f5f5f5; --muted:#aaa; --border:#eee; --border-light:#393939; --subtle:#222; }
+@media (prefers-color-scheme:dark) {
+  :root:not([data-appearance="light"]) { color-scheme:dark; --bg:#111; --text:#f5f5f5; --muted:#aaa; --border:#eee; --border-light:#393939; --subtle:#222; }
+}
+button { color:var(--text); background:transparent; border:1px solid var(--border-light); padding:7px 10px; font:inherit; }
+button:disabled { opacity:.5; cursor:default; }
+.primary-action, .popup-panel button[type="submit"] { background:var(--text) !important; color:var(--bg) !important; border:1px solid var(--text) !important; }
+.tab-actions { display:flex; flex-wrap:nowrap; gap:6px; margin-bottom:12px; overflow-x:auto; }
+.tab-actions > button { flex-shrink:0; }
+.account-viewer { max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+.account-detail { overflow-wrap:anywhere; font-size:12px; margin-bottom:8px; }
+.settings-field { display:block; border:0; margin-block:20px; font-size:11px; }
+.settings-field select { display:block; width:100%; padding:10px; border:1px solid var(--border-light); margin-top:8px; }
+.segmented { display:flex; gap:4px; }
+.segmented button { flex:1; font-size:11px; }
+.segmented button[aria-pressed="true"] { background:var(--text); color:var(--bg); }
+.settings-actions { display:flex; justify-content:space-between; margin-top:22px; }
+.history-note { font-size:11px; color:var(--muted); margin-block:10px; }
+.history-row { padding-block:14px; border-bottom:1px solid var(--border-light); margin-bottom:12px; }
+.input-accessory { position:sticky; bottom:12px; margin:12px 0 0 auto; width:fit-content; display:flex; gap:4px; padding:4px; border:1px solid var(--border-light); border-radius:24px; background:var(--subtle); backdrop-filter:blur(18px); box-shadow:0 3px 12px #0002; z-index:2; }
+.input-accessory button { border:0; border-radius:20px; font-size:12px; }
+@media (prefers-reduced-motion:no-preference) { button { transition:background-color .15s,color .15s; } }
 
 html, body {
   font-family: var(--font);
@@ -61,7 +85,7 @@ input, textarea, select {
 
 a { color: inherit; text-decoration: none; }
 
-:focus-visible { outline: 1.5px solid #000; outline-offset: 2px; }
+:focus-visible { outline: 1.5px solid var(--text); outline-offset: 2px; }
 
 ::placeholder { color: var(--muted); }
 

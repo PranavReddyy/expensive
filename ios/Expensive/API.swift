@@ -99,7 +99,18 @@ actor API {
 
     func restore() async throws -> AuthUser? {
         session = try Vault.read()
-        guard session != nil else { return nil }
+        guard let saved = session else { return nil }
+        if saved.user.emailConfirmedAt != nil, saved.user.username != nil {
+            // The bootstrap endpoint verifies revocation, current email and ownership.
+            // Returning users do not need to repeat the signup/username handshake.
+            let version = generation
+            let user = try Wire.decoder().decode(AuthUser.self, from: try await service(appURL, path: "api/auth/bootstrap", method: "POST"))
+            guard version == generation, let current = session else { throw AppError.signedOut }
+            let updated = Session(accessToken: current.accessToken, refreshToken: current.refreshToken,
+                expiresIn: current.expiresIn, expiresAt: current.expiresAt, user: user)
+            try Vault.save(updated); session = updated
+            return user
+        }
         return try await completeAuthentication()
     }
 

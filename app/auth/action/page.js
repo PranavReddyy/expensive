@@ -44,7 +44,7 @@ export default function EmailActionPage() {
     <h1 style={{ fontSize: 18 }}>EXPENS***</h1><p role="status" style={{ margin: '24px 0', lineHeight: 1.7 }}>{state.message}</p>
     {state.mode === 'resetPassword' && <form onSubmit={save} style={{ display: 'grid', gap: 16 }}>
       <label>new password<input type="password" autoComplete="new-password" minLength={12} required value={password} onChange={e => setPassword(e.target.value)} style={{ display: 'block', padding: 12, border: '1px solid #ccc', width: '100%' }} /></label>
-      <button disabled={busy} style={{ padding: 12, background: '#000', color: '#fff' }}>{busy ? 'saving…' : 'save password'}</button>
+      <button disabled={busy} style={{ padding: 12, background: 'var(--text)', color: 'var(--bg)' }}>{busy ? 'saving…' : 'save password'}</button>
     </form>}
     <a href="/" style={{ display: 'inline-block', marginTop: 24 }}>back to sign in →</a>
   </main>;

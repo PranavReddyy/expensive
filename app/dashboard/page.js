@@ -1,6 +1,8 @@
 "use client";
-import { useState, useMemo } from "react";
-import { fmt } from "../../lib/format";
+import { useState, useMemo, useRef } from "react";
+import AccountSettings from "../../components/AccountSettings";
+import { usePreferences } from "../../components/Preferences";
+import { fmt, currencySymbol } from "../../lib/format";
 import { useProfiles, useCategories, useExpenses, useDebts } from "../../lib/useAppData";
 import { summarizeTabs } from "../../lib/tabs.mjs";
 import DataStatus from "../../components/DataStatus";
@@ -22,6 +24,10 @@ function getNowLocal() {
 }
 
 export default function Dashboard() {
+  usePreferences();
+  const [balanceMode, setBalanceMode] = useState('set');
+  const balanceRequest = useRef(null);
+  const expenseRequest = useRef(null);
   const { user } = useAuth();
   const { profiles, activeId, switchProfile, loading, dataError } =
     useProfiles();
@@ -88,13 +94,12 @@ export default function Dashboard() {
     }
     setSubmitting(true);
 
-    const { error: e1 } = await supabase.from("expenses").insert({
-      profile_id: activeId,
-      reason: form.reason.trim(),
-      amount,
-      notes: form.notes.trim() || null,
-      category_id: form.category_id || null,
-      created_at: new Date(form.datetime).toISOString(),
+    const signature = JSON.stringify([activeId,form]);
+    if (expenseRequest.current?.signature !== signature) expenseRequest.current = {signature,id:crypto.randomUUID()};
+    const { error: e1 } = await supabase.rpc('ios_add_expense', {
+      p_id:expenseRequest.current.id, p_profile:activeId, p_reason:form.reason.trim(),
+      p_amount:amount, p_notes:form.notes.trim(), p_category:form.category_id || null,
+      p_created_at:new Date(form.datetime).toISOString(),
     });
     if (e1) {
       setErr(e1.message);
@@ -102,15 +107,8 @@ export default function Dashboard() {
       return;
     }
 
-    const { error: e2 } = await supabase
-      .from("profiles")
-      .update({ balance: (active?.balance || 0) - amount })
-      .eq("id", activeId);
-    if (e2) {
-      setErr(e2.message);
-      setSubmitting(false);
-      return;
-    }
+    expenseRequest.current = null;
+    queryCache.invalidate(['profiles','expenses']);
 
     setForm({
       reason: "",
@@ -126,15 +124,14 @@ export default function Dashboard() {
   async function updateBalance() {
     setErr("");
     const bal = Number(balanceInput);
-    if (!balanceInput.trim() || !Number.isFinite(bal)) {
+    if (!/^-?\d+(\.\d{1,2})?$/.test(balanceInput) || !Number.isFinite(bal) || (balanceMode !== 'set' && bal <= 0)) {
       setErr("enter a valid amount");
       return;
     }
     setSubmitting(true);
-    const { error } = await supabase
-      .from("profiles")
-      .update({ balance: bal })
-      .eq("id", activeId);
+    const signature = JSON.stringify([activeId,balanceMode,bal]);
+    if (balanceRequest.current?.signature !== signature) balanceRequest.current = {signature,id:crypto.randomUUID()};
+    const { error } = await supabase.rpc('adjust_balance', {p_id:balanceRequest.current.id,p_profile:activeId,p_mode:balanceMode,p_amount:bal});
     if (error) {
       setErr(error.message);
       setSubmitting(false);
@@ -142,6 +139,8 @@ export default function Dashboard() {
     }
     setModal(null);
     setBalanceInput("");
+    balanceRequest.current = null;
+    queryCache.invalidate(['profiles','account_activity']);
     setSubmitting(false);
   }
 
@@ -172,9 +171,11 @@ export default function Dashboard() {
     setProfileForm({ name: "", balance: "" });
     setSubmitting(false);
     switchProfile(data.id);
+    queryCache.invalidate(['profiles']);
   }
 
   function openModal(type) {
+    setBalanceMode('set'); balanceRequest.current = null; expenseRequest.current = null;
     setErr("");
     setNotice('');
     if (type === 'transfer') setTransfer({ to: profiles.find(p => p.id !== activeId)?.id || '', amount: '', id: crypto.randomUUID() });
@@ -209,11 +210,10 @@ export default function Dashboard() {
             >
               + profile
             </button>
-            <LogoutButton style={s.smallBtn} />
+            <AccountSettings />
           </div>
         </div>
 
-        <p style={{ fontSize: 10, color: "var(--muted)", marginBottom: 12, overflowWrap: "anywhere" }}>{user?.username ? `@${user.username} · ` : ""}{user?.email}</p>
         {/* Profile tabs */}
         <AccountSwitcher profiles={profiles} activeId={activeId} onChange={switchProfile} />
 
@@ -289,7 +289,7 @@ export default function Dashboard() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 8 }}>
                 {overview.days.map((day, i) => <div key={day.key} title={`${day.label}: ${fmt(day.amount)}`} aria-label={`${day.label}: ${fmt(day.amount)}`}>
                   <div style={{ height: 54, display: 'flex', alignItems: 'flex-end', borderBottom: '1px solid var(--border-light)' }}>
-                    <div style={{ width: '100%', height: `${day.amount / Math.max(1, ...overview.days.map(d => d.amount)) * 100}%`, minHeight: day.amount ? 2 : 0, background: i === 6 ? '#000' : '#bdbdbd' }} />
+                    <div style={{ width: '100%', height: `${day.amount / Math.max(1, ...overview.days.map(d => d.amount)) * 100}%`, minHeight: day.amount ? 2 : 0, background: i === 6 ? 'var(--text)' : '#bdbdbd' }} />
                   </div><p style={{ fontSize: 9, color: 'var(--muted)', textAlign: 'center', marginTop: 4 }}>{day.label}</p>
                 </div>)}
               </div>
@@ -341,7 +341,7 @@ export default function Dashboard() {
                 {profiles.filter(p => p.id !== activeId).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
-            <div style={s.mField}><label htmlFor="transfer-amount" style={s.mLabel}>amount (₹)</label>
+            <div style={s.mField}><label htmlFor="transfer-amount" style={s.mLabel}>amount ({currencySymbol()})</label>
               <input id="transfer-amount" style={s.mInput} inputMode="decimal" disabled={submitting} value={transfer.amount} onChange={e => setTransfer(t => ({ ...t, amount: e.target.value, id: crypto.randomUUID() }))} />
             </div>
             <p style={s.mLabel}>Moves money between these accounts. Your total money and spending stay the same.</p>
@@ -368,7 +368,7 @@ export default function Dashboard() {
               </div>
               <div style={s.mField}>
                 <label htmlFor="expense-amount" style={s.mLabel}>
-                  amount (₹) *
+                  amount ({currencySymbol()}) *
                 </label>
                 <input
                   style={s.mInput}
@@ -460,9 +460,10 @@ export default function Dashboard() {
           {modal === "balance" && (
             <>
               <p style={s.modalTitle}>edit balance — {active?.name}</p>
+              <div className="segmented" style={{marginBottom:16}}>{['set','add','subtract'].map(mode => <button type="button" key={mode} aria-pressed={balanceMode === mode} onClick={() => {setBalanceMode(mode);setBalanceInput(mode === 'set' ? String(active.balance) : '');}}>{mode}</button>)}</div>
               <div style={s.mField}>
                 <label htmlFor="balance-input" style={s.mLabel}>
-                  current money in this account (₹)
+                  {balanceMode === 'set' ? 'current money in this account' : `amount to ${balanceMode}`}
                 </label>
                 <input
                   style={s.mInput}
@@ -472,7 +473,7 @@ export default function Dashboard() {
                   value={balanceInput}
                   onChange={(e) => setBalanceInput(e.target.value)}
                 />
-                <p style={s.mLabel}>Enter what you have now. Open tabs are not added or deducted again.</p>
+                <p style={s.mLabel}>{balanceMode === 'set' ? 'Enter what you have now. Open tabs are not added or deducted again.' : 'Enter only the adjustment, not your new total. This is not recorded as spending.'}</p>
               </div>
               {err && <p style={s.mErr}>// {err}</p>}
               <div style={s.mBtns}>
@@ -511,7 +512,7 @@ export default function Dashboard() {
               </div>
               <div style={s.mField}>
                 <label htmlFor="profile-balance" style={s.mLabel}>
-                  starting balance (₹)
+                  starting balance ({currencySymbol()})
                 </label>
                 <input
                   style={s.mInput}
@@ -574,9 +575,9 @@ const s = {
   smallBtn: {
     fontSize: "11px",
     background: "transparent",
-    border: "1px solid #000",
+    border: "1px solid var(--text)",
     padding: "4px 10px",
-    color: "#000",
+    color: "var(--text)",
     cursor: "pointer",
   },
 
@@ -590,13 +591,13 @@ const s = {
     cursor: "pointer",
   },
   tabActive: {
-    border: "1px solid #000",
-    color: "#000",
+    border: "1px solid var(--text)",
+    color: "var(--text)",
     background: "var(--subtle)",
     fontWeight: 600,
   },
 
-  card: { border: "1px solid #000", padding: "16px", marginBottom: "16px" },
+  card: { border: "1px solid var(--text)", padding: "16px", marginBottom: "16px" },
   cardRow: {
     display: "flex",
     justifyContent: "space-between",
@@ -630,8 +631,8 @@ const s = {
   addBtn: {
     width: "100%",
     padding: "13px",
-    background: "#000",
-    color: "#fff",
+    background: "var(--text)",
+    color: "var(--bg)",
     border: "none",
     fontSize: "13px",
     textAlign: "left",
@@ -692,8 +693,8 @@ const s = {
   },
   btn: {
     padding: "10px 20px",
-    background: "#000",
-    color: "#fff",
+    background: "var(--text)",
+    color: "var(--bg)",
     border: "none",
     fontSize: "13px",
     cursor: "pointer",
@@ -709,11 +710,11 @@ const s = {
     zIndex: 200,
   },
   modal: {
-    background: "#fff",
+    background: "var(--bg)",
     width: "100%",
     maxWidth: "480px",
     padding: "24px 20px 32px",
-    borderTop: "1px solid #000",
+    borderTop: "1px solid var(--text)",
   },
   modalTitle: {
     fontSize: "13px",
@@ -741,7 +742,7 @@ const s = {
     background: "var(--subtle)",
     padding: "7px 10px",
     marginBottom: "12px",
-    borderLeft: "2px solid #000",
+    borderLeft: "2px solid var(--text)",
   },
   mBtns: { display: "flex", gap: "8px", marginTop: "4px" },
   mCancel: {
@@ -757,8 +758,8 @@ const s = {
     flex: 1,
     padding: "10px",
     border: "none",
-    background: "#000",
-    color: "#fff",
+    background: "var(--text)",
+    color: "var(--bg)",
     fontSize: "13px",
     cursor: "pointer",
   },
@@ -778,7 +779,7 @@ const s = {
     cursor: "pointer",
   },
   catBtnActive: {
-    border: "1px solid #000",
+    border: "1px solid var(--text)",
     background: "var(--subtle)",
     fontWeight: 600,
   },

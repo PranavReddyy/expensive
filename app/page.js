@@ -100,7 +100,7 @@ const s = {
   muted: { fontSize: 11, color: "var(--muted)", lineHeight: 1.7 }, form: { display: "flex", flexDirection: "column", gap: 20, marginTop: 32 },
   label: { fontSize: 11, display: "flex", flexDirection: "column", gap: 6 },
   input: { padding: "10px 12px", border: "1px solid var(--border)", fontSize: 13, width: "100%" },
-  button: { padding: "11px 16px", background: "#000", color: "#fff", border: 0, fontSize: 13, textAlign: "left" },
+  button: { padding: "11px 16px", background: "var(--text)", color: "var(--bg)", border: 0, fontSize: 13, textAlign: "left" },
   link: { background: "transparent", border: 0, fontSize: 11, color: "var(--muted)", padding: "6px 0" },
   links: { display: "flex", justifyContent: "space-between", gap: 12 },
 };

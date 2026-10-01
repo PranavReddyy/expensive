@@ -6,6 +6,7 @@ import { firebaseAuth, identityRequest, authMessage } from "../lib/firebase-clie
 import { supabase } from "../lib/supabase";
 import { AuthContext } from "../lib/auth-context";
 import { resetSession } from "../lib/useAppData";
+import { queryCache } from "../lib/query-cache.mjs";
 
 export default function AuthProvider({ children }) {
   const [auth, setAuth] = useState({ user: null, firebaseUser: null, ready: false, error: "", needsUsername: false });
@@ -26,7 +27,10 @@ export default function AuthProvider({ children }) {
         if (version === generation.current) setAuth({ user: null, firebaseUser, ready: true, error: "", needsUsername: false });
         return;
       }
-      const profile = await identityRequest();
+      // Established users already carry the role set by username enrollment.
+      // Bootstrap still validates revocation, verification and ownership.
+      const tokenResult = await firebaseUser.getIdTokenResult();
+      const profile = tokenResult.claims.role === "authenticated" ? {} : await identityRequest();
       if (version !== generation.current) return;
       if (profile.needsUsername) {
         setAuth({ user: null, firebaseUser, ready: true, needsUsername: true, error: "" }); return;
@@ -37,9 +41,14 @@ export default function AuthProvider({ children }) {
       if (!response.ok) throw new Error(user.error);
       if (version !== generation.current || firebaseAuth().currentUser?.uid !== firebaseUser.uid) return;
       await supabase.realtime.setAuth(token);
+      if (version !== generation.current || firebaseAuth().currentUser?.uid !== firebaseUser.uid) return;
+      queryCache.setOwner(user.id);
       setAuth({ user, firebaseUser, ready: true, error: "", needsUsername: false });
     } catch (error) {
-      if (version === generation.current) setAuth({ user: null, firebaseUser, ready: true, error: authMessage(error), needsUsername: false });
+      if (version === generation.current) {
+        resetSession();
+        setAuth({ user: null, firebaseUser, ready: true, error: authMessage(error), needsUsername: false });
+      }
     }
   }, []);
 

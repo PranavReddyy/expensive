@@ -2,6 +2,7 @@ import SwiftUI
 
 @main struct ExpensiveApp: App {
     @State private var store = AppStore()
+    @AppStorage("appearance") private var appearance = AppAppearance.system.rawValue
     @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
@@ -15,21 +16,22 @@ import SwiftUI
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.white).tint(.black).preferredColorScheme(.light)
+            .background(Theme.background).tint(Theme.ink)
+            .preferredColorScheme((AppAppearance(rawValue: appearance) ?? .system).colorScheme)
             .font(Theme.font()).environment(store)
             .overlay {
                 if scenePhase != .active {
-                    Color.white.ignoresSafeArea().overlay(Text("EXPENS***").font(Theme.font(20, weight: .semibold)))
+                    Theme.background.ignoresSafeArea().overlay(Text("EXPENS***").font(Theme.font(20, weight: .semibold)))
                 }
             }
             .task { await store.bootstrap() }
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
-                if !store.starting { await store.synchronize() }
+                if !store.starting { await store.synchronizeIfStale() }
                 while !Task.isCancelled {
-                    do { try await Task.sleep(for: .seconds(30)) } catch { break }
+                    do { try await Task.sleep(for: .seconds(120)) } catch { break }
                     guard !Task.isCancelled else { break }
-                    if store.user != nil { await store.synchronize() }
+                    if store.user != nil { await store.synchronizeIfStale() }
                 }
             }
         }
@@ -55,6 +57,8 @@ extension View {
 }
 
 struct LoginView: View {
+    private enum Field: Hashable { case email, password, username }
+    @FocusState private var focus: Field?
     @Environment(AppStore.self) private var store
     @State private var email = ""
     @State private var password = ""
@@ -84,15 +88,17 @@ struct LoginView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         SectionLabel(creating ? "email" : "username or email")
                         TextField(creating ? "you@example.com" : "username or email", text: $email)
+                            .focused($focus, equals: .email).submitLabel(.next).onSubmit { focus = .password }
                             .keyboardType(creating ? .emailAddress : .default).textContentType(creating ? .emailAddress : .username)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .padding(14).overlay(Rectangle().stroke(Color.black.opacity(0.2)))
+                            .padding(14).overlay(Rectangle().stroke(Theme.ink.opacity(0.2)))
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         SectionLabel("password")
                         SecureField("password", text: $password)
+                            .focused($focus, equals: .password).submitLabel(creating ? .next : .done).onSubmit { focus = creating ? .username : nil }
                             .textContentType(creating ? .newPassword : .password)
-                            .padding(14).overlay(Rectangle().stroke(Color.black.opacity(0.2)))
+                            .padding(14).overlay(Rectangle().stroke(Theme.ink.opacity(0.2)))
                     }
                     if creating {
                         Text("Use at least 12 characters. If you previously used email codes, create your password with the same email to keep your data.")
@@ -106,8 +112,9 @@ struct LoginView: View {
                 }
                 if choosingUsername {
                     TextField("username", text: $username)
+                        .focused($focus, equals: .username).submitLabel(.done).onSubmit { focus = nil }
                         .textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .padding(14).overlay(Rectangle().stroke(Color.black.opacity(0.2)))
+                        .padding(14).overlay(Rectangle().stroke(Theme.ink.opacity(0.2)))
                     Text(availability.isEmpty ? "3–24 letters, numbers, or underscores, starting with a letter." : availability)
                         .font(Theme.font(11)).foregroundStyle(.secondary)
                     Text("Your username is reserved after email verification and cannot currently be changed.")
@@ -116,8 +123,8 @@ struct LoginView: View {
                 if let notice { Text(notice).font(Theme.font(11)).foregroundStyle(.secondary) }
                 if let error = store.error { ErrorNotice(message: error) }
                 Button(action: submit) {
-                    HStack { if busy { ProgressView().tint(.white) }; Text(title); Spacer(); Image(systemName: "arrow.right") }.padding(12)
-                }.buttonStyle(.glassProminent).disabled(busy || store.starting)
+                    HStack { if busy { ProgressView().tint(Theme.onInk) }; Text(title); Spacer(); Image(systemName: "arrow.right") }.padding(12)
+                }.buttonStyle(PrimaryActionStyle()).disabled(busy || store.starting)
                 if store.authStep == .signIn {
                     HStack {
                         Button(creating ? "sign in instead" : "create account") { creating.toggle(); store.error = nil; notice = nil }
@@ -147,6 +154,10 @@ struct LoginView: View {
         .task { if email.isEmpty { email = await API.shared.pendingEmail() } }
         .task(id: store.authStep) {
             if store.authStep == .verify { email = await API.shared.pendingEmail() }
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+                focus = store.authStep == .signIn ? .email : store.authStep == .username ? .username : nil
+            } catch {}
         }
         .task(id: "\(choosingUsername)-\(username)") {
             availability = ""

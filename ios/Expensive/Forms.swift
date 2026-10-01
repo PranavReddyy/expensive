@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct AccountForm: View {
+    private enum Field: Hashable { case name, amount }
+    @FocusState private var focus: Field?
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let kind: HomeSheet
@@ -8,32 +10,44 @@ struct AccountForm: View {
     @State private var name = ""
     @State private var amount = ""
     @State private var target: UUID?
+    @State private var balanceMode = "set"
     @State private var requestId = UUID()
     @State private var busy = false
     @State private var error: String?
     private var title: String { kind == .profile ? "new profile" : kind == .balance ? "edit balance" : "transfer money" }
     var body: some View {
-        SheetFrame(title: title, busy: busy, error: error, save: save) {
-            if kind == .profile { Section("name") { TextField("cash, bank…", text: $name).textInputAutocapitalization(.words) } }
+        SheetFrame(title: title, busy: busy, error: error, nextInput: focus == .name ? { focus = .amount } : nil, dismissInput: { focus = nil }, inputFocused: focus != nil, save: save) {
+            if kind == .profile { Section("name") { TextField("cash, bank…", text: $name).textInputAutocapitalization(.words).focused($focus, equals: .name).submitLabel(.next).onSubmit { focus = .amount } } }
             if let profile, kind != .profile { Section { Text(profile.name); Text("available \(Money.format(profile.balance))").foregroundStyle(.secondary) } }
             if kind == .transfer {
                 Section("to account") {
                     Picker("account", selection: $target) { ForEach(store.profiles.filter { $0.id != profile?.id }) { Text($0.name).tag(Optional($0.id)) } }
                 }
             }
-            Section(kind == .transfer ? "amount (₹)" : "current balance (₹)") { TextField("0.00", text: $amount).keyboardType(kind == .transfer ? .decimalPad : .numbersAndPunctuation) }
+            if kind == .balance {
+                Section {
+                    Picker("change balance", selection: $balanceMode) {
+                        Text("set").tag("set"); Text("add").tag("add"); Text("subtract").tag("subtract")
+                    }.pickerStyle(.segmented)
+                    if balanceMode != "set" { Text("Adjusts your balance only; this is not recorded as spending.").font(Theme.font(11)).foregroundStyle(.secondary) }
+                }
+            }
+            Section("\(kind == .transfer ? "amount" : balanceMode == "set" ? "current balance" : "amount to \(balanceMode)") (\(CurrencyPreference.shared.symbol))") { TextField("0.00", text: $amount).keyboardType(kind == .transfer || balanceMode != "set" ? .decimalPad : .numbersAndPunctuation).focused($focus, equals: .amount).submitLabel(.done).onSubmit { focus = nil } }
             Section {
-                Text(kind == .transfer ? "Moves money between these profiles. Your total money and spending stay the same." : "Enter the money you have right now, including money you still owe and excluding money others haven't repaid.")
+                Text(kind == .transfer ? "Moves money between these profiles. Your total money and spending stay the same." : balanceMode != "set" ? "Enter only the amount to \(balanceMode), not your new total balance." : "Enter the money you have right now, including money you still owe and excluding money others haven't repaid.")
                     .font(Theme.font(11)).foregroundStyle(.secondary)
             }
         }
         .onAppear { if kind == .balance { amount = NSDecimalNumber(decimal: profile?.balance ?? 0).stringValue }; target = store.profiles.first { $0.id != profile?.id }?.id }
+        .task { do { try await Task.sleep(for: .milliseconds(300)); focus = kind == .profile ? .name : .amount } catch {} }
         .onChange(of: amount) { requestId = UUID() }.onChange(of: name) { requestId = UUID() }.onChange(of: target) { requestId = UUID() }
+        .onChange(of: balanceMode) { amount = balanceMode == "set" ? NSDecimalNumber(decimal: profile?.balance ?? 0).stringValue : ""; requestId = UUID(); focus = .amount }
     }
     private func save() {
         guard !busy else { return }
         do {
-            let value = try Money.parse(amount.isEmpty && kind == .profile ? "0" : amount, allowNegative: kind != .transfer, allowZero: kind != .transfer)
+            let relative = kind == .balance && balanceMode != "set"
+            let value = try Money.parse(amount.isEmpty && kind == .profile ? "0" : amount, allowNegative: kind != .transfer && !relative, allowZero: kind != .transfer && !relative)
             if kind == .profile && name.trimmed.isEmpty { throw AppError.message("Enter a profile name.") }
             if kind == .transfer && target == nil { throw AppError.message("Choose another profile.") }
             busy = true; error = nil
@@ -42,7 +56,7 @@ struct AccountForm: View {
                 do {
                     if kind == .profile { try await store.createProfile(id: requestId, name: name, balance: value) }
                     else if let profile {
-                        if kind == .balance { try await store.balance(profile: profile.id, amount: value) }
+                        if kind == .balance { try await store.balance(id: requestId, profile: profile.id, amount: value, mode: balanceMode) }
                         else if let target { try await store.transfer(id: requestId, from: profile.id, to: target, amount: value) }
                     }
                     dismiss()
@@ -53,6 +67,8 @@ struct AccountForm: View {
 }
 
 struct ExpenseForm: View {
+    private enum Field: Hashable { case reason, amount, notes }
+    @FocusState private var focus: Field?
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let profile: Profile
@@ -65,10 +81,10 @@ struct ExpenseForm: View {
     @State private var busy = false
     @State private var error: String?
     var body: some View {
-        SheetFrame(title: "log expense", busy: busy, error: error, save: save) {
+        SheetFrame(title: "log expense", busy: busy, error: error, nextInput: focus == .reason ? { focus = .amount } : focus == .amount ? { focus = .notes } : nil, dismissInput: { focus = nil }, inputFocused: focus != nil, save: save) {
             Section(profile.name) {
-                TextField("what was it for?", text: $reason)
-                TextField("amount (₹)", text: $amount).keyboardType(.decimalPad)
+                TextField("what was it for?", text: $reason).focused($focus, equals: .reason).submitLabel(.next).onSubmit { focus = .amount }
+                TextField("amount (\(CurrencyPreference.shared.symbol))", text: $amount).keyboardType(.decimalPad).focused($focus, equals: .amount).submitLabel(.next).onSubmit { focus = .notes }
             }
             Section {
                 Picker("category", selection: $category) {
@@ -76,9 +92,10 @@ struct ExpenseForm: View {
                     ForEach(store.categories) { Text($0.name).tag(Optional($0.id)) }
                 }
                 DatePicker("when", selection: $date, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
-                TextField("notes (optional)", text: $notes, axis: .vertical).lineLimit(3...5)
+                TextField("notes (optional)", text: $notes).focused($focus, equals: .notes).submitLabel(.done).onSubmit { focus = nil }
             }
         }
+        .task { do { try await Task.sleep(for: .milliseconds(300)); focus = .reason } catch {} }
         .onChange(of: reason + amount + notes) { requestId = UUID() }.onChange(of: category) { requestId = UUID() }.onChange(of: date) { requestId = UUID() }
     }
     private func save() {
@@ -121,7 +138,7 @@ struct ExpenseDetail: View {
                 Section { Button("delete expense", role: .destructive) { deleting = true } }
                 if let error { Text(error).foregroundStyle(.red) }
                 if busy { ProgressView() }
-            }.font(Theme.font()).disabled(busy).scrollContentBackground(.hidden).background(Color.white)
+            }.font(Theme.font()).disabled(busy).scrollContentBackground(.hidden).background(Theme.background)
                 .navigationTitle("expense").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("done") { dismiss() }.disabled(busy) } }
                 .confirmationDialog("Delete this expense and restore \(Money.format(expense.amount))?", isPresented: $deleting, titleVisibility: .visible) {
