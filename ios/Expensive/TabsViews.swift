@@ -72,12 +72,20 @@ struct TabsView: View {
 }
 
 struct AddTabForm: View {
-    private enum Field: Hashable { case person, reason, amount }
+    private enum Field: Hashable { case person, reason, amount, share(UUID), own }
     @FocusState private var focus: Field?
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let profile: Profile
     let split: Bool
+    var onSaved: (() -> Void)? = nil
+    @State private var custom = false
+    @State private var shares: [UUID: String] = [:]
+    @State private var ownAmount = ""
+    init(profile: Profile, split: Bool, initialAmount: String = "", initialReason: String = "", onSaved: (() -> Void)? = nil) {
+        self.profile = profile; self.split = split; self.onSaved = onSaved
+        _amount = State(initialValue: initialAmount); _reason = State(initialValue: initialReason)
+    }
     @State private var query = ""
     @State private var selected: [UUID] = []
     @State private var amount = ""
@@ -88,21 +96,24 @@ struct AddTabForm: View {
     @State private var personRequestId = UUID()
     @State private var busy = false
     @State private var error: String?
-    private var matches: [Person] { store.people.filter { $0.profileId == profile.id && $0.name.localizedCaseInsensitiveContains(query.trimmed) && !selected.contains($0.id) } }
+    private var matches: [Person] { store.people(for: profile.id).filter { $0.profileId == profile.id && $0.name.localizedCaseInsensitiveContains(query.trimmed) && !selected.contains($0.id) } }
     private var preview: (amounts: [Decimal], own: Decimal)? {
         guard split, let value = try? Money.parse(amount) else { return nil }
-        return try? Money.split(value, people: selected.count, includesYou: includesYou)
+        return try? division(value)
     }
+    private var customFields: [String] { selected.map { shares[$0] ?? "" } + (includesYou ? [ownAmount] : []) }
+    private var autoShare: (index: Int, value: String)? { Money.remainder(amount, fields: customFields) }
+    private func shareText(_ index: Int) -> String { autoShare?.index == index ? autoShare!.value : customFields[index] }
     var body: some View {
         SheetFrame(title: split ? "split a payment" : "add amount", busy: busy, error: error, nextInput: focus == .person ? { focus = .reason } : focus == .reason ? { focus = .amount } : nil, dismissInput: { focus = nil }, inputFocused: focus != nil, save: save) {
             Section("people") {
                 ForEach(selected, id: \.self) { id in
-                    HStack { Text(store.people.first { $0.id == id }?.name ?? "person"); Spacer(); Button { selected.removeAll { $0 == id } } label: { Image(systemName: "xmark") }.accessibilityLabel("Remove person") }
+                    HStack { Text(store.people(for: profile.id).first { $0.id == id }?.name ?? "person"); Spacer(); Button { selected.removeAll { $0 == id } } label: { Image(systemName: "xmark") }.accessibilityLabel("Remove person") }
                 }
                 TextField("search or add a name", text: $query).autocorrectionDisabled().focused($focus, equals: .person).submitLabel(.next).onSubmit { focus = .reason }
                 if !query.trimmed.isEmpty {
                     ForEach(matches) { person in Button(person.name) { choose(person) } }
-                    if !store.people.contains(where: { $0.profileId == profile.id && $0.name.caseInsensitiveCompare(query.trimmed) == .orderedSame }) {
+                    if !store.people(for: profile.id).contains(where: { $0.profileId == profile.id && $0.name.caseInsensitiveCompare(query.trimmed) == .orderedSame }) {
                         Button("+ add “\(query.trimmed)”") { addPerson() }
                     }
                 }
@@ -112,13 +123,37 @@ struct AddTabForm: View {
             }
             Section {
                 TextField("what was it for?", text: $reason).focused($focus, equals: .reason).submitLabel(.next).onSubmit { focus = .amount }
-                TextField(split ? "total you paid (\(CurrencyPreference.shared.symbol))" : "amount (\(CurrencyPreference.shared.symbol))", text: $amount).keyboardType(.decimalPad).focused($focus, equals: .amount).submitLabel(.done).onSubmit { focus = nil }
+                TextField(split ? "total you paid (\(CurrencyPreference.shared.symbol))" : "amount (\(CurrencyPreference.shared.symbol))", text: $amount).keyboardType(.numbersAndPunctuation).focused($focus, equals: .amount).submitLabel(.done).onSubmit { focus = nil }
                 if split { Toggle("include my share", isOn: $includesYou) }
+            }
+            if split {
+                Section("split method") {
+                    Picker("Split method", selection: $custom) { Text("Equal").tag(false); Text("Custom amounts").tag(true) }.pickerStyle(.segmented)
+                    if custom {
+                        ForEach(selected, id: \.self) { id in
+                            let name = store.people(for: profile.id).first { $0.id == id }?.name ?? "person"
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(name)
+                                TextField("share amount", text: Binding(get: { shareText(selected.firstIndex(of: id)!) }, set: { shares[id] = $0 }))
+                                    .keyboardType(.numbersAndPunctuation).focused($focus, equals: .share(id)).accessibilityLabel("Share for \(name)")
+                            }
+                        }
+                        if includesYou {
+                            TextField("your share", text: Binding(get: { shareText(selected.count) }, set: { ownAmount = $0 })).keyboardType(.numbersAndPunctuation).focused($focus, equals: .own).accessibilityLabel("Your share")
+                        }
+                        Text("Leave one share blank to calculate the remainder automatically. Your share can be zero.").font(Theme.font(11)).foregroundStyle(.secondary)
+                        if let autoShare { Text("Automatic remainder: \(autoShare.value)").font(Theme.font(11)).foregroundStyle(.secondary) }
+                        if let total = try? Money.parse(amount) {
+                            let allocated = customFields.indices.reduce(Decimal.zero) { $0 + ((try? Money.parse(shareText($1), allowZero: true)) ?? 0) }
+                            Text(allocated <= total ? "Left to assign: \(Money.format(total - allocated))" : "Over total: \(Money.format(allocated - total))").font(Theme.font(11))
+                        }
+                    }
+                }
             }
             if let preview {
                 Section("split preview") {
                     ForEach(Array(selected.enumerated()), id: \.element) { index, id in
-                        HStack { Text(store.people.first { $0.id == id }?.name ?? "person"); Spacer(); Text(Money.format(preview.amounts[index])) }
+                        HStack { Text(store.people(for: profile.id).first { $0.id == id }?.name ?? "person"); Spacer(); Text(Money.format(preview.amounts[index])) }
                     }
                     if includesYou { HStack { Text("your expense"); Spacer(); Text(Money.format(preview.own)) } }
                 }
@@ -128,9 +163,17 @@ struct AddTabForm: View {
             }
         }
         .task { do { try await Task.sleep(for: .milliseconds(300)); focus = .person } catch {} }
+        .onChange(of: custom) { requestId = UUID(); error = nil }
+        .onChange(of: shares) { requestId = UUID() }.onChange(of: ownAmount) { requestId = UUID() }
         .onChange(of: query) { personRequestId = UUID() }
         .onChange(of: amount + reason) { requestId = UUID() }.onChange(of: selected) { requestId = UUID() }
         .onChange(of: direction) { requestId = UUID() }.onChange(of: includesYou) { requestId = UUID() }
+    }
+    private func division(_ total: Decimal) throws -> (amounts: [Decimal], own: Decimal) {
+        if custom {
+            return try Money.customSplit(total, amounts: selected.indices.map { try Money.parse(shareText($0)) }, own: includesYou ? Money.parse(shareText(selected.count), allowZero: true) : 0)
+        }
+        return try Money.split(total, people: selected.count, includesYou: includesYou)
     }
     private func choose(_ person: Person) {
         selected = split ? Array(Set(selected + [person.id])).sorted { $0.uuidString < $1.uuidString } : [person.id]
@@ -151,12 +194,12 @@ struct AddTabForm: View {
             let value = try Money.parse(amount)
             guard !selected.isEmpty else { throw AppError.message("Search for a person or add a name.") }
             guard !reason.trimmed.isEmpty else { throw AppError.message("Add what this amount was for.") }
-            let division = split ? try Money.split(value, people: selected.count, includesYou: includesYou) : (amounts: [value], own: Decimal.zero)
+            let division = split ? try division(value) : (amounts: [value], own: Decimal.zero)
             let rows = selected.enumerated().map { AppStore.TabRow(personId: $0.element, amount: division.amounts[$0.offset], direction: split ? .collect : direction, description: reason.trimmed) }
             busy = true; error = nil
             Task {
                 defer { busy = false }
-                do { try await store.addTabs(id: requestId, profile: profile.id, rows: rows, ownShare: division.own); dismiss() }
+                do { try await store.addTabs(id: requestId, profile: profile.id, rows: rows, ownShare: division.own); onSaved?(); dismiss() }
                 catch { self.error = error.localizedDescription }
             }
         } catch { self.error = error.localizedDescription }
@@ -169,19 +212,26 @@ struct SettlementForm: View {
     @Environment(\.dismiss) private var dismiss
     let tab: PersonTab
     @State private var amount = ""
+    @State private var onMe = false
     @State private var requestId = UUID()
     @State private var busy = false
     @State private var error: String?
     var body: some View {
-        SheetFrame(title: tab.person.name, busy: busy, error: error, actionTitle: tab.net == 0 ? "clear" : "record", prominentAction: true, dismissInput: { amountFocused = false }, inputFocused: amountFocused, save: save) {
+        SheetFrame(title: tab.person.name, busy: busy, error: error, actionTitle: onMe ? "On me." : tab.net == 0 ? "clear" : "record", prominentAction: true, dismissInput: { amountFocused = false }, inputFocused: amountFocused, save: save) {
+            if tab.net > 0 {
+                Section {
+                    Picker("settle as", selection: $onMe) { Text("payment received").tag(false); Text("On me.").tag(true) }.pickerStyle(.segmented)
+                    if onMe { Text("Clear this amount and record it as your expense. It already left your balance when you paid, so it won't be deducted twice.").font(Theme.font(11)).foregroundStyle(.secondary) }
+                }
+            }
             Section {
-                Text(tab.net > 0 ? "payment received from them" : tab.net < 0 ? "payment you made to them" : "clear matching amounts")
+                Text(onMe ? "take this amount as your own expense" : tab.net > 0 ? "payment received from them" : tab.net < 0 ? "payment you made to them" : "clear matching amounts")
                 Text("net remaining \(Money.format(abs(tab.net)))")
                 if tab.collect > 0 && tab.pay > 0 { Text("\(Money.format(min(tab.collect, tab.pay))) cancels out in both directions when confirmed.").font(Theme.font(11)).foregroundStyle(.secondary) }
             }
-            if tab.net != 0 { Section("amount (\(CurrencyPreference.shared.symbol))") { TextField("0.00", text: $amount).keyboardType(.decimalPad).focused($amountFocused).submitLabel(.done).onSubmit { amountFocused = false } } }
+            if tab.net != 0 { Section("amount (\(CurrencyPreference.shared.symbol))") { TextField("0.00", text: $amount).keyboardType(.numbersAndPunctuation).focused($amountFocused).submitLabel(.done).onSubmit { amountFocused = false } } }
             Section {
-                Text(tab.net > 0 ? "Adds this payment to your balance." : tab.net < 0 ? "Deducts this payment and saves it as an expense." : "Your balance stays the same.").font(Theme.font(11)).foregroundStyle(.secondary)
+                Text(onMe ? "Your present balance stays the same. The amount is no longer owed to you." : tab.net > 0 ? "Adds this payment to your balance." : tab.net < 0 ? "Deducts this payment and saves it as an expense." : "Your balance stays the same.").font(Theme.font(11)).foregroundStyle(.secondary)
             }
             Section {
                 DisclosureGroup("view entries") {
@@ -195,6 +245,7 @@ struct SettlementForm: View {
             }
         }.onAppear { amount = NSDecimalNumber(decimal: abs(tab.net)).stringValue }
             .onChange(of: amount) { requestId = UUID() }
+            .onChange(of: onMe) { requestId = UUID(); error = nil }
             .task { do { try await Task.sleep(for: .milliseconds(300)); amountFocused = tab.net != 0 } catch {} }
     }
     private func save() {
@@ -205,7 +256,7 @@ struct SettlementForm: View {
             busy = true; error = nil
             Task {
                 defer { busy = false }
-                do { try await store.settle(tab, payment: payment, id: requestId); dismiss() }
+                do { try await store.settle(tab, payment: payment, id: requestId, onMe: onMe); dismiss() }
                 catch { self.error = error.localizedDescription }
             }
         } catch { self.error = error.localizedDescription }
@@ -235,13 +286,13 @@ struct TabHistoryView: View {
         NavigationStack {
             List {
                 Section { Text(profile.name).font(Theme.font(12)); Text("Payments and balance changes recorded after the history update. Undo reverses a payment, not a real-world transfer.").font(Theme.font(11)).foregroundStyle(.secondary) }
-                if loading { ProgressView() }
+                if loading { LoadingState(title: "loading history") }
                 if let error { Section { ErrorNotice(message: error, retry: { Task { await load() } }) } }
                 if !loading && error == nil && rows.isEmpty { Text("No activity yet.").foregroundStyle(.secondary) }
                 ForEach(rows) { item in
                     VStack(alignment: .leading, spacing: 10) {
                         HStack { Text(item.title); Spacer(); Text(Money.format(item.amount)).monospacedDigit() }
-                        Text(item.kind == "settlement" ? (item.balanceDelta > 0 ? "payment received" : item.balanceDelta < 0 ? "payment made" : "matching amounts cleared") : "balance adjustment")
+                        Text(item.kind == "settlement" ? (item.balanceDelta > 0 ? "payment received" : item.balanceDelta < 0 ? "payment made" : item.amount > 0 ? "On me · recorded as spending" : "matching amounts cleared") : "balance adjustment")
                             .font(Theme.font(11)).foregroundStyle(.secondary)
                         Text(item.createdAt.formatted(.dateTime.day().month().year().hour().minute())).font(Theme.font(10)).foregroundStyle(.secondary)
                         if item.undoneAt != nil { Text("undone").font(Theme.font(11)).foregroundStyle(.secondary) }

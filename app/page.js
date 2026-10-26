@@ -1,11 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
-import { createUserWithEmailAndPassword, reload, signOut } from "firebase/auth";
-import { firebaseAuth, identityRequest, authMessage, sendAccountEmail, signInWithIdentifier, checkUsername } from "../lib/firebase-client";
+import { supabase } from "../lib/supabase";
+import { signOut, identityRequest, authMessage, sendAccountEmail, signInWithIdentifier, checkUsername } from "../lib/supabase-auth";
 import { useAuth } from "../lib/auth-context";
 
 export default function LoginPage() {
-  const { firebaseUser, needsUsername, error: accountError, refreshAuth, ready } = useAuth();
+  const { authUser, needsUsername, error: accountError, refreshAuth, ready } = useAuth();
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -14,8 +14,9 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [nextEmail, setNextEmail] = useState(0);
-  const verify = !!firebaseUser && !firebaseUser.emailVerified;
-  const choosingUsername = needsUsername || (!firebaseUser && mode === 'signup');
+  const [pendingEmail, setPendingEmail] = useState("");
+  const verify = !!pendingEmail || (!!authUser && !authUser.emailVerified);
+  const choosingUsername = needsUsername || (!authUser && mode === 'signup');
   const [availability, setAvailability] = useState('');
   useEffect(() => {
     setAvailability('');
@@ -40,14 +41,13 @@ export default function LoginPage() {
   async function submit(event) {
     event.preventDefault();
     await run(async () => {
-      const auth = firebaseAuth();
+
       if (verify) {
-        await reload(auth.currentUser); await auth.currentUser.getIdToken(true);
-        if (!auth.currentUser.emailVerified) throw new Error("Open the verification link in your email first.");
-        await refreshAuth();
+        await signInWithIdentifier(pendingEmail || email.trim().toLowerCase(), password);
+        setPendingEmail(""); setPassword(""); await refreshAuth();
       } else if (needsUsername) {
         await identityRequest("POST", username); await refreshAuth();
-      } else if (firebaseUser) {
+      } else if (authUser) {
         await refreshAuth();
       } else if (mode === "reset") {
         await sendAccountEmail('reset', email.trim().toLowerCase());
@@ -55,38 +55,38 @@ export default function LoginPage() {
       } else if (mode === "signup") {
         if (password.length < 12) throw new Error("Use at least 12 characters for your password.");
         if (!await checkUsername(username.trim())) throw new Error('That username is already taken.');
-        const { user } = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
-        setPassword("");
-        await sendAccountEmail('verify'); setNextEmail(Date.now() + 60000);
+        const { error } = await supabase.auth.signUp({ email: email.trim().toLowerCase(), password, options: { emailRedirectTo: `${window.location.origin}/auth/action` } });
+        if (error) throw error;
+        setPendingEmail(email.trim().toLowerCase()); setNextEmail(Date.now() + 60000);
         setNotice("Check your inbox for a verification link.");
       } else {
         await signInWithIdentifier(email.trim().toLowerCase(), password); setPassword("");
       }
     });
   }
-  const label = verify ? "I've verified my email →" : needsUsername ? "save username →" : firebaseUser ? "retry connection →" : mode === "signup" ? "create account →" : mode === "reset" ? "send reset link →" : "sign in →";
+  const label = verify ? "I've verified my email →" : needsUsername ? "save username →" : authUser ? "retry connection →" : mode === "signup" ? "create account →" : mode === "reset" ? "send reset link →" : "sign in →";
   return <main style={s.page}><div style={s.box}>
     <p style={s.logo}>EXPENS***</p><p style={s.muted}>your money, at a glance</p>
     <form onSubmit={submit} style={s.form}>
-      {verify ? <p style={s.muted}>Verify the link sent to {firebaseUser.email}, then continue here.</p>
-        : needsUsername ? <p style={s.muted}>Confirm your username. It belongs to you across our apps.</p>
-        : !firebaseUser && <>
+      {verify ? <p style={s.muted}>Verify the link sent to {(pendingEmail || authUser?.email)}, then continue here.</p>
+        : needsUsername ? <p style={s.muted}>Confirm your username. It belongs to your Expensive account.</p>
+        : !authUser && <>
           <label style={s.label}>{mode === 'signin' ? 'username or email' : 'email'}<input style={s.input} type={mode === 'signin' ? 'text' : 'email'} value={email} onChange={e => setEmail(e.target.value)} autoComplete={mode === 'signin' ? 'username' : 'email'} autoCapitalize="none" spellCheck={false} required /></label>
           {mode !== "reset" && <label style={s.label}>password<input style={s.input} type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete={mode === "signup" ? "new-password" : "current-password"} minLength={mode === "signup" ? 12 : 1} required /></label>}
-          {mode === "signup" && <p style={s.muted}>Already used Expensive with email codes? Create your password using that same email to keep your data.</p>}
+          {mode === "signup" && <p style={s.muted}>Previously used Expensive? Use forgot password with your existing email to restore access.</p>}
         </>}
       {choosingUsername && <>
         <label style={s.label}>username<input style={s.input} value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} minLength={3} maxLength={24} pattern="[A-Za-z][A-Za-z0-9_]{2,23}" required aria-describedby="username-status" /></label>
-        <p id="username-status" role="status" style={s.muted}>{availability || '3–24 letters, numbers, or underscores; start with a letter.'} {mode === 'signup' && !firebaseUser ? 'Your name is reserved when you confirm it after email verification.' : 'Usernames cannot currently be changed.'}</p>
+        <p id="username-status" role="status" style={s.muted}>{availability || '3–24 letters, numbers, or underscores; start with a letter.'} {mode === 'signup' && !authUser ? 'Your name is reserved when you confirm it after email verification.' : 'Usernames cannot currently be changed.'}</p>
       </>}
       {(error || accountError) && <p role="alert" style={s.muted}>{error || accountError}</p>}
       {notice && <p role="status" style={s.muted}>{notice}</p>}
       <button style={s.button} disabled={busy || !ready}>{busy || !ready ? "please wait…" : label}</button>
       {verify && <button type="button" style={s.link} disabled={busy} onClick={() => run(async () => {
         if (Date.now() < nextEmail) throw new Error("Wait a minute before requesting another email.");
-        await sendAccountEmail('verify'); setNextEmail(Date.now() + 60000); setNotice("Verification link sent.");
+        await sendAccountEmail('verify', pendingEmail || email); setNextEmail(Date.now() + 60000); setNotice("Verification link sent.");
       })}>resend verification email</button>}
-      {firebaseUser ? <button type="button" style={s.link} disabled={busy} onClick={() => run(() => signOut(firebaseAuth()))}>use another account</button>
+      {(authUser || pendingEmail) ? <button type="button" style={s.link} disabled={busy} onClick={() => run(async () => { await signOut(); setPendingEmail(""); setPassword(""); })}>use another account</button>
         : <div style={s.links}>
           <button type="button" style={s.link} disabled={busy} onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setError(""); setNotice(""); }}>{mode === "signup" ? "sign in instead" : "create account"}</button>
           <button type="button" style={s.link} disabled={busy} onClick={() => { setMode(mode === "reset" ? "signin" : "reset"); setError(""); setNotice(""); }}>{mode === "reset" ? "back to sign in" : "forgot password?"}</button>

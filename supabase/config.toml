@@ -1,0 +1,30 @@
+project_id = "expensive"
+
+[auth]
+site_url = "https://expensive.itsbypranav.com"
+additional_redirect_urls = ["https://expensive.itsbypranav.com/auth/action"]
+minimum_password_length = 12
+
+[auth.third_party.firebase]
+enabled = false
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+
+[auth.email.smtp]
+enabled = true
+host = "smtp.resend.com"
+port = 465
+user = "resend"
+pass = "env(RESEND_API_KEY)"
+admin_email = "expensive@itsbypranav.com"
+sender_name = "Expens***"
+
+[auth.email.template.confirmation]
+subject = "Verify your Expens*** email"
+content_path = "./docs/email-confirm.html"
+
+[auth.email.template.recovery]
+subject = "Reset your Expens*** password"
+content_path = "./docs/email-reset.html"

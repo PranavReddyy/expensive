@@ -13,6 +13,7 @@ INSERT INTO people(id,profile_id,name) VALUES('${id(20)}','${id(10)}','Sam');
 GRANT USAGE ON SCHEMA public TO authenticated,anon;`);
 const migration = await readFile(new URL('../ios/Database/activity-history.sql', import.meta.url), 'utf8');
 await db.exec(migration); await db.exec(migration);
+await db.exec(await readFile(new URL('../ios/Database/on-me.sql', import.meta.url), 'utf8'));
 after(() => db.close());
 async function asUser(owner, action) {
  await db.query("SELECT set_config('test.owner',$1,false)",[owner || '']);
@@ -22,6 +23,36 @@ async function asUser(owner, action) {
 const balance = async () => Number((await db.query(`SELECT balance FROM profiles WHERE id='${id(10)}'`)).rows[0].balance);
 const record = (request,payment,collect,pay) => db.query('SELECT record_tab_payment($1,$2,$3,$4,$5,$6)',[id(request),id(10),id(20),payment,collect,pay]);
 const undo = request => db.query('SELECT undo_tab_payment($1)',[id(request)]);
+test('On me forgives net debt without double debit, is retry safe and can be undone',async()=>{
+ await setup(100,20);
+ const forgive = () => db.query('SELECT record_tab_on_me($1,$2,$3,$4,$5,$6)',[id(90),id(10),id(20),80,100,20]);
+ await asUser(id(2),()=>assert.rejects(forgive(),/Account not found/));
+ await asUser(id(1),async()=>{ await forgive(); await forgive(); });
+ assert.equal(await balance(),1000);
+ assert.equal(Number((await db.query('SELECT sum(remaining_amount) AS total FROM debts')).rows[0].total),0);
+ assert.equal(Number((await db.query('SELECT sum(amount) AS total FROM expenses')).rows[0].total),80);
+ await asUser(id(1),()=>undo(90));
+ assert.equal(await balance(),1000);
+ assert.equal((await db.query('SELECT * FROM expenses')).rows.length,0);
+ assert.equal(Number((await db.query('SELECT sum(remaining_amount) AS total FROM debts')).rows[0].total),120);
+ await asUser(id(1),()=>forgive());
+ assert.equal((await db.query('SELECT * FROM expenses')).rows.length,0);
+});
+test('On me partial forgiveness rejects stale totals and preserves undo safeguards',async()=>{
+ await setup(100,0);
+ const forgive = (request,amount,expected=100) => db.query('SELECT record_tab_on_me($1,$2,$3,$4,$5,$6)',[id(request),id(10),id(20),amount,expected,0]);
+ await asUser(id(1),async()=>{
+   await assert.rejects(forgive(91,110));
+   await assert.rejects(forgive(91,10,99),/changed/);
+   await forgive(91,30);
+   await assert.rejects(forgive(91,40),/already used/);
+ });
+ assert.equal(await balance(),1000);
+ assert.equal(Number((await db.query('SELECT sum(remaining_amount) AS total FROM debts')).rows[0].total),70);
+ await db.exec("UPDATE expenses SET notes='changed'");
+ await asUser(id(1),()=>assert.rejects(undo(91),/expense was changed/));
+ assert.equal(await balance(),1000);
+});
 async function setup(collect,pay) {
  await db.exec('DELETE FROM account_activity; DELETE FROM debts; DELETE FROM expenses;');
  await db.exec(`UPDATE profiles SET balance=1000 WHERE id='${id(10)}';`);

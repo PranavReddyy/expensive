@@ -1,9 +1,44 @@
 import SwiftUI
+import AppIntents
+import Observation
+
+@MainActor @Observable final class ShortcutRoute {
+    static let shared = ShortcutRoute()
+    private(set) var requestedAt: Date?
+    func requestExpense(now: Date = .now) { requestedAt = now }
+    func consumeExpense(now: Date = .now) -> Bool {
+        guard let requestedAt else { return false }
+        self.requestedAt = nil
+        return (0..<300).contains(now.timeIntervalSince(requestedAt))
+    }
+}
+
+struct LogExpenseIntent: AppIntent {
+    static var title: LocalizedStringResource { "Log Expense" }
+    static var description: IntentDescription { IntentDescription("Open the expense form in Expens***. Review the amount and account, then save in the app.") }
+    static var openAppWhenRun: Bool { true }
+    static var authenticationPolicy: IntentAuthenticationPolicy { .requiresLocalDeviceAuthentication }
+    @MainActor func perform() async throws -> some IntentResult {
+        ShortcutRoute.shared.requestExpense()
+        return .result()
+    }
+}
+
+struct ExpensiveShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
+        AppShortcut(intent: LogExpenseIntent(), phrases: ["Log an expense in \(.applicationName)", "Add an expense in \(.applicationName)"], shortTitle: "Log Expense", systemImageName: "plus.circle")
+    }
+}
 
 @main struct ExpensiveApp: App {
-    @State private var store = AppStore()
+    @State private var store: AppStore
     @AppStorage("appearance") private var appearance = AppAppearance.system.rawValue
     @Environment(\.scenePhase) private var scenePhase
+    init() {
+        let store = AppStore()
+        _store = State(initialValue: store)
+        WatchPhoneBridge.shared.start(store: store)
+    }
     var body: some Scene {
         WindowGroup {
             Group {
@@ -12,12 +47,6 @@ import SwiftUI
                 } else if let user = store.user {
                     MainTabs().id(user.id)
                         .disabled(store.validating)
-                        .safeAreaInset(edge: .top, spacing: 0) {
-                            if store.validating {
-                                HStack(spacing: 8) { ProgressView().controlSize(.small); Text("saved data · verifying account…").font(Theme.font(10)) }
-                                    .frame(maxWidth: .infinity).padding(.vertical, 6).background(Theme.background)
-                            }
-                        }
                 } else {
                     LoginView()
                 }
@@ -32,13 +61,21 @@ import SwiftUI
                 }
             }
             .task { await store.bootstrap() }
+            .task(id: "\(store.user?.id.uuidString ?? "")-\(store.activeId?.uuidString ?? "")-\(store.revision)-\(store.loading)-\(store.starting)-\(store.validating)-\(store.pendingExpenses.count)") {
+                guard !store.loading else { return }
+                await WatchPhoneBridge.shared.publish()
+            }
+            .task(id: "\(scenePhase)-\(store.user?.id.uuidString ?? "")-\(store.validating)") {
+                guard scenePhase == .active, !store.validating else { return }
+                await store.watchChanges()
+            }
             .task(id: scenePhase) {
                 guard scenePhase == .active else { return }
                 if !store.starting { await store.synchronizeIfStale() }
                 while !Task.isCancelled {
-                    do { try await Task.sleep(for: .seconds(120)) } catch { break }
+                    do { try await Task.sleep(for: .seconds(60)) } catch { break }
                     guard !Task.isCancelled else { break }
-                    if store.user != nil { await store.synchronizeIfStale() }
+                    if store.user != nil { await store.flushExpenses(); await store.synchronizeIfStale() }
                 }
             }
         }
@@ -46,13 +83,15 @@ import SwiftUI
 }
 
 struct MainTabs: View {
+    @State private var selected = "home"
     var body: some View {
-        TabView {
-            Tab("Home", systemImage: "house") { NavigationStack { HomeView() } }
-            Tab("Expenses", systemImage: "list.bullet.rectangle") { NavigationStack { ExpensesView() } }
-            Tab("Analytics", systemImage: "chart.bar.xaxis") { NavigationStack { AnalyticsView() } }
-            Tab("Tabs", systemImage: "person.2") { NavigationStack { TabsView() } }
+        TabView(selection: $selected) {
+            Tab("Home", systemImage: "house", value: "home") { NavigationStack { HomeView() } }
+            Tab("Expenses", systemImage: "list.bullet.rectangle", value: "expenses") { NavigationStack { ExpensesView() } }
+            Tab("Analytics", systemImage: "chart.bar.xaxis", value: "analytics") { NavigationStack { AnalyticsView() } }
+            Tab("Tabs", systemImage: "person.2", value: "tabs") { NavigationStack { TabsView() } }
         }
+        .onChange(of: ShortcutRoute.shared.requestedAt, initial: true) { if ShortcutRoute.shared.requestedAt != nil { selected = "home" } }
     }
 }
 
@@ -108,14 +147,14 @@ struct LoginView: View {
                             .padding(14).overlay(Rectangle().stroke(Theme.ink.opacity(0.2)))
                     }
                     if creating {
-                        Text("Use at least 12 characters. If you previously used email codes, create your password with the same email to keep your data.")
+                        Text("Use at least 12 characters. Existing users: use forgot password with your original email.")
                             .font(Theme.font(11)).foregroundStyle(.secondary)
                     }
                 case .verify:
                     Text("Open the verification link sent to \(email), then continue here.")
                         .font(Theme.font(12)).foregroundStyle(.secondary)
                 case .username:
-                    Text("Confirm your username, shared across our apps.").foregroundStyle(.secondary)
+                    Text("Confirm your Expensive username.").foregroundStyle(.secondary)
                 }
                 if choosingUsername {
                     TextField("username", text: $username)

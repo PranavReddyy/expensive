@@ -18,27 +18,85 @@ enum AppAppearance: String, CaseIterable {
 }
 
 struct PrimaryActionStyle: ButtonStyle {
+    var compact = false
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(Theme.onInk)
-            .padding(.horizontal, 18).padding(.vertical, 12)
-            .background(Theme.ink, in: Capsule())
+            .foregroundStyle(.white)
+            .padding(.horizontal, compact ? 12 : 18).padding(.vertical, compact ? 8 : 12)
+            .glassEffect(.regular.tint(.black).interactive(), in: Capsule())
             .opacity(enabled ? (configuration.isPressed ? 0.75 : 1) : 0.45)
     }
 }
 
+struct CategoryChips: View {
+    let categories: [Category]
+    @Binding var selection: UUID?
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                ForEach(categories) { category in
+                    Button { selection = selection == category.id ? nil : category.id } label: {
+                        Text(category.name).font(Theme.font(11)).fixedSize()
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .foregroundStyle(selection == category.id ? Theme.onInk : Theme.ink)
+                            .background(selection == category.id ? Theme.ink : Theme.ink.opacity(0.06), in: Capsule())
+                            .frame(minHeight: 44)
+                    }.buttonStyle(.plain).accessibilityAddTraits(selection == category.id ? .isSelected : [])
+                }
+            }
+        }.scrollIndicators(.hidden).accessibilityLabel("Categories; tap selected category to clear")
+    }
+}
+
 struct Page<Content: View>: View {
+    @Environment(AppStore.self) private var store
     @ViewBuilder let content: () -> Content
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24, content: content)
+            VStack(alignment: .leading, spacing: 24) {
+                if !store.validating && (!store.pendingExpenses.isEmpty || !store.online) {
+                    PageSyncStatus()
+                }
+                content()
+            }
                 .frame(maxWidth: 640, alignment: .leading)
                 .padding(.horizontal, 22).padding(.top, 12).padding(.bottom, 32)
                 .frame(maxWidth: .infinity)
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Theme.background)
+    }
+}
+
+// A small inline status, never an overlay over navigation or saved content.
+struct LoadingState: View {
+    var title = "loading"
+    var body: some View {
+        HStack(spacing: 9) {
+            ProgressView().controlSize(.small).tint(Theme.ink)
+            Text(title).font(Theme.font(11)).foregroundStyle(.secondary)
+        }.frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+            .accessibilityElement(children: .ignore).accessibilityLabel(title)
+    }
+}
+
+// Exceptional states belong to page content, not an inset around TabView's
+// navigation chrome. Startup verification and normal refreshes stay silent.
+struct PageSyncStatus: View {
+    @Environment(AppStore.self) private var store
+    var body: some View {
+        if !store.pendingExpenses.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("\(store.pendingExpenses.count) pending · \(Money.format(store.pendingExpenses.reduce(0) { $0 + $1.amount })) not confirmed")
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(store.syncingExpenses ? "syncing…" : "retry sync") {
+                    Task { await store.flushExpenses(retry: true) }
+                }.disabled(store.syncingExpenses)
+            }.font(Theme.font(11)).foregroundStyle(.secondary)
+        } else if !store.online {
+            Text("offline · showing saved data").font(Theme.font(11)).foregroundStyle(.secondary)
+        }
     }
 }
 
@@ -298,6 +356,8 @@ struct SheetFrame<Content: View>: View {
     var nextInput: (() -> Void)? = nil
     var dismissInput: (() -> Void)? = nil
     var inputFocused = false
+    var openTabs: (() -> Void)? = nil
+    var openSplit: (() -> Void)? = nil
     let save: () -> Void
     @ViewBuilder let content: () -> Content
     var body: some View {
@@ -313,31 +373,49 @@ struct SheetFrame<Content: View>: View {
                 ToolbarItem(placement: .confirmationAction) {
                     if prominentAction {
                         Button(action: save) {
-                            if busy { ProgressView().tint(Theme.onInk) }
-                            else { Text(actionTitle).foregroundStyle(Theme.onInk) }
-                        }.buttonStyle(PrimaryActionStyle()).tint(Theme.ink).disabled(busy)
+                            Text(actionTitle).font(Theme.font(13, weight: .medium))
+                                .foregroundStyle(.white).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                                .opacity(busy ? 0 : 1)
+                                .overlay { if busy { ProgressView().tint(.white) } }
+                        }.buttonStyle(PrimaryActionStyle(compact: true))
+                            .fixedSize(horizontal: true, vertical: false)
+                            .tint(Theme.ink).disabled(busy)
                     } else {
                         Button(action: save) { if busy { ProgressView() } else { Text(actionTitle) } }.disabled(busy)
                     }
-                }
+                }.sharedBackgroundVisibility(.hidden)
             }
             .disabled(busy)
         }
         .safeAreaInset(edge: .bottom, alignment: .trailing, spacing: 0) {
             if inputFocused, let dismissInput {
-                HStack(spacing: 0) {
-                    if let nextInput {
-                        Button("next", action: nextInput).padding(.horizontal, 16).frame(minHeight: 44)
+                HStack(alignment: .center, spacing: 8) {
+                    if openTabs != nil || openSplit != nil {
+                        HStack(spacing: 0) {
+                            if let openTabs {
+                                Button("tabs", action: openTabs).padding(.horizontal, 14).frame(minHeight: 44)
+                                    .accessibilityLabel("Add an amount to Tabs")
+                            }
+                            if let openSplit {
+                                Button("split", action: openSplit).padding(.horizontal, 14).frame(minHeight: 44)
+                                    .accessibilityLabel("Split this payment")
+                            }
+                        }.glassEffect(.regular.interactive(), in: Capsule())
                     }
-                    Button("done", action: dismissInput).padding(.horizontal, 16).frame(minHeight: 44)
+                    Spacer(minLength: 0)
+                    HStack(spacing: 0) {
+                        if let nextInput {
+                            Button("next", action: nextInput).padding(.horizontal, 14).frame(minHeight: 44)
+                        }
+                        Button("done", action: dismissInput).padding(.horizontal, 14).frame(minHeight: 44)
+                    }.glassEffect(.regular.interactive(), in: Capsule())
                 }
                 .font(Theme.font(13, weight: .medium))
                 .buttonStyle(.plain).foregroundStyle(Theme.ink)
-                .glassEffect(.regular.interactive(), in: Capsule())
                 .disabled(busy)
-                // Outside the glass: lift the whole capsule, not its labels.
-                .padding(.trailing, 16).padding(.bottom, 12).padding(.top, 8)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.horizontal, 16).padding(.bottom, 12).padding(.top, 8)
+                .frame(maxWidth: .infinity)
+
             }
         }
         .interactiveDismissDisabled(busy).presentationDragIndicator(.visible)

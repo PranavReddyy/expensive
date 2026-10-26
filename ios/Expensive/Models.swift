@@ -55,6 +55,7 @@ struct Category: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     let name: String
     let sortOrder: Int?
+    var archived: Bool? = nil
 }
 
 struct Expense: Codable, Identifiable, Hashable, Sendable {
@@ -66,6 +67,52 @@ struct Expense: Codable, Identifiable, Hashable, Sendable {
     let createdAt: Date
     let categoryId: UUID?
     let categories: Category?
+    var version: Int? = nil
+}
+
+struct RecurringExpense: Codable, Identifiable, Sendable {
+    let id: UUID
+    let profileId: UUID
+    let reason: String
+    let amount: Decimal
+    let cadence: String
+    let nextDue: String
+    let paused: Bool
+}
+
+struct PendingExpense: Codable, Identifiable, Sendable {
+    let owner: UUID
+    let id: UUID
+    let profile: UUID
+    let reason: String
+    let amount: Decimal
+    let category: UUID?
+    let notes: String
+    let date: Date
+    var error: String? = nil
+    var blocked = false
+}
+
+enum ExpenseOutbox {
+    private static func url(owner: UUID) throws -> URL {
+        let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appending(path: "PendingExpenses", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        var folder = base; var values = URLResourceValues(); values.isExcludedFromBackup = true
+        try folder.setResourceValues(values)
+        return base.appending(path: owner.uuidString + ".json")
+    }
+    static func read(owner: UUID) throws -> [PendingExpense] {
+        let location = try url(owner: owner)
+        guard FileManager.default.fileExists(atPath: location.path) else { return [] }
+        let rows = try Wire.decoder().decode([PendingExpense].self, from: Data(contentsOf: location))
+        guard rows.allSatisfy({ $0.owner == owner }) else { throw AppError.message("Pending expenses belong to a different account.") }
+        return rows
+    }
+    static func save(_ rows: [PendingExpense], owner: UUID) throws {
+        guard rows.allSatisfy({ $0.owner == owner }) else { throw AppError.signedOut }
+        try Wire.encoder().encode(rows).write(to: url(owner: owner), options: [.atomic, .completeFileProtection])
+    }
 }
 
 struct Person: Codable, Identifiable, Hashable, Sendable {
@@ -101,14 +148,33 @@ struct PersonTab: Identifiable, Hashable, Sendable {
     var label: String { net > 0 ? "owes you" : net < 0 ? "you owe" : open ? "amounts cancel out" : "settled" }
 }
 
+enum ExpenseSort: String, CaseIterable {
+    case newest = "newest first", oldest = "oldest first", highest = "high to low", lowest = "low to high"
+    func apply(_ rows: [Expense]) -> [Expense] {
+        rows.sorted { a, b in
+            if (self == .highest || self == .lowest), a.amount != b.amount { return self == .highest ? a.amount > b.amount : a.amount < b.amount }
+            if a.createdAt != b.createdAt { return self == .oldest ? a.createdAt < b.createdAt : a.createdAt > b.createdAt }
+            return a.id.uuidString < b.id.uuidString
+        }
+    }
+}
+
 enum Money {
+    static func remainder(_ total: String, fields: [String]) -> (index: Int, value: String)? {
+        let empty = fields.indices.filter { fields[$0].trimmed.isEmpty }
+        guard empty.count == 1, let total = try? parse(total) else { return nil }
+        var assigned = Decimal.zero
+        for index in fields.indices where index != empty[0] {
+            guard let value = try? parse(fields[index], allowZero: true) else { return nil }
+            assigned += value
+        }
+        guard assigned <= total else { return nil }
+        return (empty[0], NSDecimalNumber(decimal: total-assigned).stringValue)
+    }
     static func parse(_ text: String, allowNegative: Bool = false, allowZero: Bool = false) throws -> Decimal {
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pattern = allowNegative ? #"^-?\d+(\.\d{1,2})?$"# : #"^\d+(\.\d{1,2})?$"#
-        guard cleaned.range(of: pattern, options: .regularExpression) != nil,
-              let value = Decimal(string: cleaned, locale: Locale(identifier: "en_US_POSIX")),
+        guard let value = try? AmountCalculation.parse(text),
               abs(value) < 10_000_000_000, (allowNegative || value >= 0), (allowZero || value != 0)
-        else { throw AppError.message("Enter a valid amount with up to two decimals.") }
+        else { throw AppError.message("Enter a valid amount, or start with = to calculate using +, −, × or ÷.") }
         return value
     }
 
@@ -124,6 +190,19 @@ enum Money {
     @MainActor static func format(_ amount: Decimal) -> String {
         formatter.currencySymbol = CurrencyPreference.shared.symbol
         return formatter.string(from: amount as NSDecimalNumber) ?? "\(CurrencyPreference.shared.symbol)0.00"
+    }
+
+    static func customSplit(_ total: Decimal, amounts: [Decimal], own: Decimal) throws -> (amounts: [Decimal], own: Decimal) {
+        func valid(_ value: Decimal, zero: Bool) -> Bool {
+            guard !value.isNaN, value >= 0, value < 10_000_000_000, zero || value > 0 else { return false }
+            let pennies = value * 100
+            return Decimal(NSDecimalNumber(decimal: pennies).int64Value) == pennies
+        }
+        guard valid(total, zero: false), !amounts.isEmpty, amounts.allSatisfy({ valid($0, zero: false) }), valid(own, zero: true) else {
+            throw AppError.message("Enter a positive share for each person, with up to two decimals. Your share may be zero.")
+        }
+        guard amounts.reduce(own, +) == total else { throw AppError.message("All shares must add up exactly to the total payment.") }
+        return (amounts, own)
     }
 
     static func split(_ total: Decimal, people: Int, includesYou: Bool) throws -> (amounts: [Decimal], own: Decimal) {
@@ -215,13 +294,13 @@ enum Insights {
 }
 
 enum AppError: LocalizedError {
-    case message(String), signedOut, verificationRequired, usernameRequired
+    case message(String), rejected(String), signedOut, verificationRequired, usernameRequired
     var errorDescription: String? {
         switch self {
-        case .message(let text): text
+        case .message(let text), .rejected(let text): text
         case .signedOut: "Please sign in again."
         case .verificationRequired: "Verify your email, then continue."
-        case .usernameRequired: "Choose your shared username."
+        case .usernameRequired: "Choose your Expensive username."
         }
     }
 }

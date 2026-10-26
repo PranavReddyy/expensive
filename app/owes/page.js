@@ -1,9 +1,11 @@
 "use client";
+import { amountValue, validAmount } from '../../lib/amount.mjs';
+import AmountInput from '../../components/AmountInput';
 import { useMemo, useState, useRef } from "react";
 import ActivityHistory from "../../components/ActivityHistory";
 import { usePreferences } from "../../components/Preferences";
 import { useProfiles, usePeople, useDebts } from "../../lib/useAppData";
-import { summarizeTabs, splitAmount } from "../../lib/tabs.mjs";
+import { summarizeTabs, splitAmount, customSplit } from "../../lib/tabs.mjs";
 import { queryCache } from "../../lib/query-cache.mjs";
 import { fmt, currencySymbol } from "../../lib/format";
 import { supabase } from "../../lib/supabase";
@@ -32,12 +34,15 @@ export default function TabsPage() {
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [includesYou, setIncludesYou] = useState(true);
+  const [onMe,setOnMe]=useState(false),[custom,setCustom]=useState(false),[shares,setShares]=useState({});
+  const currentSplit=()=>custom ? customSplit(amount,[...selected.map(id=>shares[id] || ''),...(includesYou?[shares.self || '']:[])],includesYou) : splitAmount(amount,selected.length,includesYou);
   const [person, setPerson] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const allPeople = [...people, ...extraPeople.filter(p => !people.some(x => x.id === p.id))];
   function open(type, p) {
     request.current = null;
+    setOnMe(false);setCustom(false);setShares({});
     setModal(type); setError(""); setQuery(""); setSelected([]); setAmount("");
     setDescription(""); setIncludesYou(true); setDirection("they_owe_me");
     if (p) {
@@ -62,16 +67,16 @@ export default function TabsPage() {
     try {
       let result;
       if (modal === "settle") {
-        if (!/^\d+(\.\d{1,2})?$/.test(amount)) throw new Error("Enter an amount with up to two decimals.");
-        const signature = JSON.stringify([activeId,person.id,amount,person.collect,person.pay]);
+        if (!validAmount(amount)) throw new Error("Enter an amount with up to two decimals.");
+        const signature = JSON.stringify([activeId,person.id,amount,person.collect,person.pay,onMe]);
         if (request.current?.signature !== signature) request.current = { signature, id: crypto.randomUUID() };
-        result = await supabase.rpc("record_tab_payment", { p_id:request.current.id, p_profile: activeId, p_person: person.id,
-          p_payment: Number(amount), p_expected_collect: person.collect/100, p_expected_pay: person.pay/100 });
+        result = await supabase.rpc(onMe ? "record_tab_on_me" : "record_tab_payment", { p_id:request.current.id, p_profile: activeId, p_person: person.id,
+          p_payment: amountValue(amount), p_expected_collect: person.collect/100, p_expected_pay: person.pay/100 });
       } else {
         if (!selected.length) throw new Error("Search for a person or add a new name.");
         if (!description.trim()) throw new Error("Add what this is for.");
-        if (!/^\d+(\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) throw new Error("Enter an amount with up to two decimals.");
-        const split = modal === "split" ? splitAmount(amount, selected.length, includesYou) : { amounts: [Number(amount)], ownShare: 0 };
+        if (!validAmount(amount) || amountValue(amount) <= 0) throw new Error("Enter an amount with up to two decimals.");
+        const split = modal === "split" ? currentSplit() : { amounts: [amountValue(amount)], ownShare: 0 };
         const payload = { p_profile: activeId, p_own_share: split.ownShare,
           p_rows: selected.map((id,i) => ({ person_id: id, amount: split.amounts[i],
             direction: modal === "split" ? "they_owe_me" : direction, description: description.trim() })) };
@@ -84,8 +89,8 @@ export default function TabsPage() {
     } catch(e) { setError(e.message); } finally { setBusy(false); }
   }
   let preview;
-  if (modal === "split" && selected.length && Number(amount) > 0) {
-    try { preview = splitAmount(amount, selected.length, includesYou); } catch {}
+  if (modal === "split" && selected.length && amountValue(amount) > 0) {
+    try { preview = currentSplit(); } catch {}
   }
   if (loading || (dataError && !profiles.length)) return <DataStatus error={dataError} />;
   const matches = allPeople.filter(p => p.profile_id === activeId && p.name.toLowerCase().includes(query.trim().toLowerCase()));
@@ -145,6 +150,8 @@ export default function TabsPage() {
     </> : <p>Create a profile from Home first.</p>}
     {modal && <Modal title={modal === "settle" ? person.name : "Add to tabs"} onClose={close} onSubmit={save} busy={busy} onError={e => setError(e.message)} style={s.modal}>
       <p style={s.header}>{modal === "settle" ? person.name : modal === "split" ? "split a payment" : "add amount"}</p>
+      {modal === 'settle' && person.collect>person.pay && <div className="segmented">{[[false,'payment received'],[true,'On me.']].map(([value,label])=><button type="button" key={label} aria-pressed={onMe===value} onClick={()=>setOnMe(value)}>{label}</button>)}</div>}
+      {onMe && <p style={s.muted}>Make this your own expense and clear what they owe. The money already left your balance when the tab was added, so it won’t be deducted twice.</p>}
       {modal !== "settle" ? <>
         <label style={s.muted}>people</label>
         <div style={s.actions}>{selected.map(id => <button type="button" style={s.button} key={id} onClick={() => setSelected(ids => ids.filter(x => x !== id))}>{allPeople.find(p => p.id === id)?.name} ×</button>)}</div>
@@ -158,10 +165,12 @@ export default function TabsPage() {
         {person.collect > 0 && person.pay > 0 && <p style={s.muted}>{fmt(Math.min(person.collect,person.pay)/100)} cancels out in both directions when confirmed.</p>}
         <details style={{margin:"10px 0"}}><summary style={s.muted}>view entries</summary>{person.entries.map(d => <p style={s.muted} key={d.id}>{d.description} · {d.direction === "they_owe_me" ? "owed to you" : "you owe"} {fmt(d.remaining_amount)}</p>)}</details></>}
       <label style={s.muted}>{modal === "split" ? 'total you paid' : 'amount'} ({currencySymbol()})</label>
-      <input style={s.input} inputMode="decimal" aria-label="Amount" value={amount} onChange={e => setAmount(e.target.value)} />
+      <AmountInput style={s.input} inputMode="decimal" aria-label="Amount" value={amount} onChange={e => setAmount(e.target.value)} />
       {modal === "split" && <><label style={s.muted}><input type="checkbox" style={{appearance:"auto",marginRight:8}} checked={includesYou} onChange={e => setIncludesYou(e.target.checked)} />include my share</label>
+        <div className="segmented">{[[false,'equal'],[true,'custom']].map(([value,label])=><button type="button" key={label} aria-pressed={custom===value} onClick={()=>setCustom(value)}>{label}</button>)}</div>
+        {custom && <div className="expense-fields">{[...selected,...(includesYou?['self']:[])].map((id,i)=><label key={id}>{id==='self'?'your share':allPeople.find(p=>p.id===id)?.name}<AmountInput inputMode="decimal" value={shares[id] || ''} placeholder={preview ? String(id==='self'?preview.ownShare:preview.amounts[i]) : 'amount'} onChange={e=>setShares(current=>({...current,[id]:e.target.value}))}/></label>)}<p style={s.muted}>Leave one share blank to use the remaining amount.</p></div>}
         {preview && <div style={{marginTop:8}}>{selected.map((id,i) => <p style={s.muted} key={id}>{allPeople.find(p => p.id === id)?.name}: {fmt(preview.amounts[i])}</p>)}{includesYou && <p style={s.muted}>your expense: {fmt(preview.ownShare)}</p>}</div>}</>}
-      <p style={{...s.muted,marginTop:10}}>{modal === "split" ? "The full payment leaves your balance. Only your share is logged as an expense." : modal === "add" ? direction === "they_owe_me" ? "This amount leaves your balance now." : "Your balance changes when you record payment." : person.collect < person.pay ? "This payment leaves your balance and is logged as an expense." : person.collect > person.pay ? "This payment is added to your balance." : "Your balance stays the same."}</p>
+      {!onMe && <p style={{...s.muted,marginTop:10}}>{modal === "split" ? "The full payment leaves your balance. Only your share is logged as an expense." : modal === "add" ? direction === "they_owe_me" ? "This amount leaves your balance now." : "Your balance changes when you record payment." : person.collect < person.pay ? "This payment leaves your balance and is logged as an expense." : person.collect > person.pay ? "This payment is added to your balance." : "Your balance stays the same."}</p>}
       {error && <p role="alert" style={{color:"#b00",fontSize:11}}>{error}</p>}
       <div style={{...s.actions,marginTop:16}}><button type="button" style={s.button} disabled={busy} onClick={close}>cancel</button><button type="submit" style={{...s.button,...s.active}} disabled={busy}>{busy ? "saving…" : modal === "settle" ? "confirm" : "save"}</button></div>
     </Modal>}{history && active && <ActivityHistory key={active.id} profile={active} onClose={() => setHistory(false)} />}<Nav />

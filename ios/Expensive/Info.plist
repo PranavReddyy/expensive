@@ -3,9 +3,7 @@
 <plist version="1.0"><dict>
   <key>SupabaseURL</key><string>$(SUPABASE_URL)</string>
   <key>SupabaseKey</key><string>$(SUPABASE_ANON_KEY)</string>
-  <key>FirebaseAPIKey</key><string>$(FIREBASE_API_KEY)</string>
   <key>AppURL</key><string>$(APP_URL)</string>
-  <key>IdentityURL</key><string>$(IDENTITY_URL)</string>
   <key>UIAppFonts</key><array>
     <string>IBMPlexMono-Regular.ttf</string>
     <string>IBMPlexMono-Medium.ttf</string>

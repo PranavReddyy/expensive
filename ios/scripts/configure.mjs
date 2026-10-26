@@ -13,10 +13,8 @@ if (existsSync(target) && !process.argv.includes('--force')) {
   const url = env.NEXT_PUBLIC_SUPABASE_URL;
   const key = env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key || !url.startsWith('https://') || /[\r\n]/.test(url + key)) throw new Error('Add the public Supabase URL and key to the web .env first.');
-  const firebase = env.NEXT_PUBLIC_FIREBASE_API_KEY || '';
   const appURL = env.NEXT_PUBLIC_APP_URL || 'https://expensive.itsbypranav.com';
-  const identityURL = env.NEXT_PUBLIC_IDENTITY_URL || appURL;
-  if (![appURL, identityURL].every(value => value.startsWith('https://')) || /[\r\n]/.test(firebase + appURL + identityURL)) throw new Error('Native app URLs must use HTTPS.');
-  writeFileSync(target, `// Generated local public-client configuration. Do not put service role keys here.\nSUPABASE_URL = ${url.replace('https://','https:/$()/')}\nSUPABASE_ANON_KEY = ${key}\nFIREBASE_API_KEY = ${firebase}\nAPP_URL = ${appURL.replace('https://','https:/$()/')}\nIDENTITY_URL = ${identityURL.replace('https://','https:/$()/')}\n`);
+  if (!appURL.startsWith('https://') || /[\r\n]/.test(appURL)) throw new Error('Native app URLs must use HTTPS.');
+  writeFileSync(target, `// Generated local public-client configuration. Do not put service role keys here.\nSUPABASE_URL = ${url.replace('https://','https:/$()/')}\nSUPABASE_ANON_KEY = ${key}\nAPP_URL = ${appURL.replace('https://','https:/$()/')}\n`);
   console.log('Configured native app using the existing public Supabase settings.');
 }

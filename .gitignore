@@ -50,6 +50,7 @@ dist/
 ios/Config/Local.xcconfig
 ios/build/
 ios/DerivedData/
+ios/WatchDeviceBuild/
 **/xcuserdata/
 *.xcuserstate
 
@@ -57,3 +58,7 @@ ios/DerivedData/
 .firebase/
 *firebase-adminsdk*.json
 *service-account*.json
+.vercel
+playwright-report/
+test-results/
+.env*

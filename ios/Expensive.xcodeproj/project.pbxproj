@@ -10,20 +10,37 @@
 		05AB45B3FBA23714D15FAD37 /* IBMPlexMono-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 31A64DB6A7C89A49A40078BD /* IBMPlexMono-Medium.ttf */; };
 		106DA5F7695FBA90AE93D927 /* Forms.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77E8152CF118DE64AE004067 /* Forms.swift */; };
 		1E11E981A2AE2A3EB56896DD /* ExpensiveApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F49D5459631F0F969D4CBFCD /* ExpensiveApp.swift */; };
+		1EFC121CDD5131CE0DE821E7 /* WatchPhoneBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62622016E28E3E932AB4D4F5 /* WatchPhoneBridge.swift */; };
+		25CFDF3B700AE397BDC21BF2 /* ExpensiveWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5639FD18EE2AC74A6017460F /* ExpensiveWatchApp.swift */; };
+		2891232133B5FB90988741D1 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3F448DB643AEB96233458CE2 /* Assets.xcassets */; };
 		2D1813D4433C8303B98B1E98 /* IBMPlexMono-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = DFBB375CF8AC9A9B6A3A35D7 /* IBMPlexMono-SemiBold.ttf */; };
+		34A9640009965A33D1884940 /* Trips.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04EDA623A220E0AA2150E312 /* Trips.swift */; };
 		390CF6167C0938FE976DA370 /* OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = 0FBA80D3DE48F70CB1D7D7A1 /* OFL.txt */; };
 		51A6785673EFAE49B2761768 /* OverviewViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9E853D6700FA993EFECFFB4 /* OverviewViews.swift */; };
+		59082FD2B1E53A7CA82A9C8B /* ExpensiveWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 8BC67CFA2D8ADE01957DC763 /* ExpensiveWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		66AD6C8B46068CDE291908CA /* API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08DA400C31F290E2BB734F9F /* API.swift */; };
 		6ECC8B3F50E72EEC6B182F30 /* AppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87E4879042897362C22A737F /* AppStore.swift */; };
+		77884E422878777917D99B39 /* WatchWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBFBB91F25A7CB18A5B5AB3A /* WatchWire.swift */; };
+		7E56F32CDEC3D400CF0A4B0F /* AmountCalculation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 498A28824D07D5F91AD35A18 /* AmountCalculation.swift */; };
 		8E4A8F83743094F503D1059C /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD80E6E32F9BDC5DAFA1BEB4 /* Theme.swift */; };
 		9785297796C642862F32C52B /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDAAFD4451E8DE3795B6958A /* Models.swift */; };
+		9A2E1DC697218D41054C89FD /* ProfileSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD1CECEED27510216E9BA9EE /* ProfileSettings.swift */; };
 		A60F4C00508D78414D0F0ABA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 55D9D97DEBFDB8B896C2046C /* Assets.xcassets */; };
 		B4F9F3A170C2FE355AC66238 /* ExpensiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D943A3E7514255E4D28B1587 /* ExpensiveTests.swift */; };
 		C88760A8E170A68EED74966E /* IBMPlexMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 56AEF83E951D0A6263852C07 /* IBMPlexMono-Regular.ttf */; };
+		C952191C4F82D87F9143DE31 /* AmountCalculation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 498A28824D07D5F91AD35A18 /* AmountCalculation.swift */; };
+		E6D8EB4B030228E747EC9351 /* WatchWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBFBB91F25A7CB18A5B5AB3A /* WatchWire.swift */; };
 		F10B55F0314EB4DA00FBA577 /* TabsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9722FE41DE62EA9F3C93AC24 /* TabsViews.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		0905FA7C52D64952CD557173 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F77583A3FF9BB0AAAFA4F894 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EC47F4572F7499EB35864D72;
+			remoteInfo = ExpensiveWatch;
+		};
 		C7F8353C719ECDB2C6CA66A8 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = F77583A3FF9BB0AAAFA4F894 /* Project object */;
@@ -33,24 +50,46 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		FBB5124F2DD3D053C23391D7 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				59082FD2B1E53A7CA82A9C8B /* ExpensiveWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		04EDA623A220E0AA2150E312 /* Trips.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Trips.swift; sourceTree = "<group>"; };
 		08DA400C31F290E2BB734F9F /* API.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = API.swift; sourceTree = "<group>"; };
 		08FA4F92CD11E024485D807E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		0FBA80D3DE48F70CB1D7D7A1 /* OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = OFL.txt; sourceTree = "<group>"; };
-		112A286339ECCDCE30E2D971 /* Expensive.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Expensive.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		112A286339ECCDCE30E2D971 /* Expensive.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Expensive.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		31A64DB6A7C89A49A40078BD /* IBMPlexMono-Medium.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Medium.ttf"; sourceTree = "<group>"; };
+		3F448DB643AEB96233458CE2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		498A28824D07D5F91AD35A18 /* AmountCalculation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmountCalculation.swift; sourceTree = "<group>"; };
 		55D9D97DEBFDB8B896C2046C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		5639FD18EE2AC74A6017460F /* ExpensiveWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpensiveWatchApp.swift; sourceTree = "<group>"; };
 		56AEF83E951D0A6263852C07 /* IBMPlexMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-Regular.ttf"; sourceTree = "<group>"; };
+		62622016E28E3E932AB4D4F5 /* WatchPhoneBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchPhoneBridge.swift; sourceTree = "<group>"; };
 		6875D652862790D35C4DE77F /* Local.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.xcconfig; sourceTree = "<group>"; };
 		77E8152CF118DE64AE004067 /* Forms.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Forms.swift; sourceTree = "<group>"; };
 		87E4879042897362C22A737F /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
+		8BC67CFA2D8ADE01957DC763 /* ExpensiveWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExpensiveWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9722FE41DE62EA9F3C93AC24 /* TabsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabsViews.swift; sourceTree = "<group>"; };
 		A9E853D6700FA993EFECFFB4 /* OverviewViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewViews.swift; sourceTree = "<group>"; };
 		AD80E6E32F9BDC5DAFA1BEB4 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		BD1CECEED27510216E9BA9EE /* ProfileSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileSettings.swift; sourceTree = "<group>"; };
+		CBFBB91F25A7CB18A5B5AB3A /* WatchWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchWire.swift; sourceTree = "<group>"; };
 		CDAAFD4451E8DE3795B6958A /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		D943A3E7514255E4D28B1587 /* ExpensiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpensiveTests.swift; sourceTree = "<group>"; };
 		DFBB375CF8AC9A9B6A3A35D7 /* IBMPlexMono-SemiBold.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "IBMPlexMono-SemiBold.ttf"; sourceTree = "<group>"; };
-		E5AE057B5C8ACD677C77805D /* ExpensiveTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ExpensiveTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		E5AE057B5C8ACD677C77805D /* ExpensiveTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ExpensiveTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F49D5459631F0F969D4CBFCD /* ExpensiveApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpensiveApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -66,8 +105,11 @@
 				08FA4F92CD11E024485D807E /* Info.plist */,
 				CDAAFD4451E8DE3795B6958A /* Models.swift */,
 				A9E853D6700FA993EFECFFB4 /* OverviewViews.swift */,
+				BD1CECEED27510216E9BA9EE /* ProfileSettings.swift */,
 				9722FE41DE62EA9F3C93AC24 /* TabsViews.swift */,
 				AD80E6E32F9BDC5DAFA1BEB4 /* Theme.swift */,
+				04EDA623A220E0AA2150E312 /* Trips.swift */,
+				62622016E28E3E932AB4D4F5 /* WatchPhoneBridge.swift */,
 				6955112831FEF8DD57563020 /* Fonts */,
 			);
 			path = Expensive;
@@ -79,8 +121,28 @@
 				BF24FF4FA69B13AB7D42B9D6 /* Config */,
 				085676B982A472EAFBFACA0D /* Expensive */,
 				D7D11DF48EAEE8B189785649 /* ExpensiveTests */,
+				3B029DD033E66B3356B58A6B /* ExpensiveWatch */,
+				4F0C44EDEE352F71F016740F /* Shared */,
 				CEDB921469C847788FDDA9D8 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		3B029DD033E66B3356B58A6B /* ExpensiveWatch */ = {
+			isa = PBXGroup;
+			children = (
+				3F448DB643AEB96233458CE2 /* Assets.xcassets */,
+				5639FD18EE2AC74A6017460F /* ExpensiveWatchApp.swift */,
+			);
+			path = ExpensiveWatch;
+			sourceTree = "<group>";
+		};
+		4F0C44EDEE352F71F016740F /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				498A28824D07D5F91AD35A18 /* AmountCalculation.swift */,
+				CBFBB91F25A7CB18A5B5AB3A /* WatchWire.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		6955112831FEF8DD57563020 /* Fonts */ = {
@@ -107,6 +169,7 @@
 			children = (
 				112A286339ECCDCE30E2D971 /* Expensive.app */,
 				E5AE057B5C8ACD677C77805D /* ExpensiveTests.xctest */,
+				8BC67CFA2D8ADE01957DC763 /* ExpensiveWatch.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -128,10 +191,12 @@
 			buildPhases = (
 				9093CC13446D79D7D8DCB9AA /* Sources */,
 				81B416C31BFCEA531C61087F /* Resources */,
+				FBB5124F2DD3D053C23391D7 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				D9D2BC90E16F4A63F08796A5 /* PBXTargetDependency */,
 			);
 			name = Expensive;
 			packageProductDependencies = (
@@ -158,6 +223,24 @@
 			productReference = E5AE057B5C8ACD677C77805D /* ExpensiveTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		EC47F4572F7499EB35864D72 /* ExpensiveWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 64412A5AC75CFA5C67A5A8A3 /* Build configuration list for PBXNativeTarget "ExpensiveWatch" */;
+			buildPhases = (
+				705F07269504FBA0AF48CF3B /* Sources */,
+				FC8D2D4E7240A26A8A5236C9 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ExpensiveWatch;
+			packageProductDependencies = (
+			);
+			productName = ExpensiveWatch;
+			productReference = 8BC67CFA2D8ADE01957DC763 /* ExpensiveWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -168,9 +251,15 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					480C43139745F9E80B830B41 = {
+						DevelopmentTeam = 37KM75D8K3;
 						ProvisioningStyle = Automatic;
 					};
 					8F2AA15CDAF65B0F15CA0205 = {
+						DevelopmentTeam = 37KM75D8K3;
+						ProvisioningStyle = Automatic;
+					};
+					EC47F4572F7499EB35864D72 = {
+						DevelopmentTeam = 37KM75D8K3;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -190,6 +279,7 @@
 			projectRoot = "";
 			targets = (
 				480C43139745F9E80B830B41 /* Expensive */,
+				EC47F4572F7499EB35864D72 /* ExpensiveWatch */,
 				8F2AA15CDAF65B0F15CA0205 /* ExpensiveTests */,
 			);
 		};
@@ -208,9 +298,27 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		FC8D2D4E7240A26A8A5236C9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2891232133B5FB90988741D1 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		705F07269504FBA0AF48CF3B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C952191C4F82D87F9143DE31 /* AmountCalculation.swift in Sources */,
+				25CFDF3B700AE397BDC21BF2 /* ExpensiveWatchApp.swift in Sources */,
+				77884E422878777917D99B39 /* WatchWire.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		85B07F733F340AF018D53BA8 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -224,19 +332,29 @@
 			buildActionMask = 2147483647;
 			files = (
 				66AD6C8B46068CDE291908CA /* API.swift in Sources */,
+				7E56F32CDEC3D400CF0A4B0F /* AmountCalculation.swift in Sources */,
 				6ECC8B3F50E72EEC6B182F30 /* AppStore.swift in Sources */,
 				1E11E981A2AE2A3EB56896DD /* ExpensiveApp.swift in Sources */,
 				106DA5F7695FBA90AE93D927 /* Forms.swift in Sources */,
 				9785297796C642862F32C52B /* Models.swift in Sources */,
 				51A6785673EFAE49B2761768 /* OverviewViews.swift in Sources */,
+				9A2E1DC697218D41054C89FD /* ProfileSettings.swift in Sources */,
 				F10B55F0314EB4DA00FBA577 /* TabsViews.swift in Sources */,
 				8E4A8F83743094F503D1059C /* Theme.swift in Sources */,
+				34A9640009965A33D1884940 /* Trips.swift in Sources */,
+				1EFC121CDD5131CE0DE821E7 /* WatchPhoneBridge.swift in Sources */,
+				E6D8EB4B030228E747EC9351 /* WatchWire.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		D9D2BC90E16F4A63F08796A5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EC47F4572F7499EB35864D72 /* ExpensiveWatch */;
+			targetProxy = 0905FA7C52D64952CD557173 /* PBXContainerItemProxy */;
+		};
 		DEC966766BEBADC46F51F665 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 480C43139745F9E80B830B41 /* Expensive */;
@@ -245,6 +363,23 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		25ABA24F188FFD33997585FD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = NO;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.itsbypranav.expensive;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				INFOPLIST_KEY_WKWatchOnly = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.itsbypranav.expensive.watchkitapp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
 		32D0A4155C957E9E4C178ACA /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -282,7 +417,6 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = 37KM75D8K3;
 				INFOPLIST_FILE = Expensive/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -291,6 +425,23 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.itsbypranav.expensive;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7485CB71232CC18E5246724F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
+				INFOPLIST_KEY_UILaunchScreen_Generation = NO;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.itsbypranav.expensive;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				INFOPLIST_KEY_WKWatchOnly = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.itsbypranav.expensive.watchkitapp;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Debug;
 		};
@@ -332,6 +483,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 37KM75D8K3;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -352,7 +504,6 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
@@ -400,6 +551,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 37KM75D8K3;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -427,7 +579,6 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -442,7 +593,6 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				DEVELOPMENT_TEAM = 37KM75D8K3;
 				INFOPLIST_FILE = Expensive/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -457,6 +607,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		64412A5AC75CFA5C67A5A8A3 /* Build configuration list for PBXNativeTarget "ExpensiveWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7485CB71232CC18E5246724F /* Debug */,
+				25ABA24F188FFD33997585FD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		903170147EF0458E9267D206 /* Build configuration list for PBXNativeTarget "ExpensiveTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

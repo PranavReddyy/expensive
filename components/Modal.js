@@ -13,6 +13,7 @@ export default function Modal({ children, title, onClose, onSubmit, onError, bus
   const titleId = useId();
   const [editing, setEditing] = useState(false);
   const [hasNext, setHasNext] = useState(false);
+  const [hasInputs, setHasInputs] = useState(false);
   function inputState() {
     const fields = [...(panel.current?.querySelectorAll(editable) || [])].filter(field => field.getClientRects().length);
     const index = fields.indexOf(document.activeElement);
@@ -26,7 +27,9 @@ export default function Modal({ children, title, onClose, onSubmit, onError, bus
   function keepInputVisible() {
     const field = document.activeElement;
     const container = panel.current;
-    if (!container?.contains(field)) return;
+    // Moving the scroll position as a button receives pointer focus can move it
+    // away before pointer-up, swallowing the click (including Save).
+    if (!container?.contains(field) || !field.matches(editable)) return;
     const bounds = container.getBoundingClientRect();
     const input = field.getBoundingClientRect();
     if (input.bottom > bounds.bottom - 16) container.scrollTop += input.bottom - bounds.bottom + 16;
@@ -51,6 +54,7 @@ export default function Modal({ children, title, onClose, onSubmit, onError, bus
     };
     update();
     const fields = [...panel.current.querySelectorAll(editable)];
+    setHasInputs(fields.length > 0);
     fields.forEach((field, index) => {
       if (field.tagName === "INPUT") field.enterKeyHint = index < fields.length - 1 ? "next" : "done";
     });
@@ -113,9 +117,10 @@ export default function Modal({ children, title, onClose, onSubmit, onError, bus
         onFocusCapture={() => { keepInputVisible(); inputState(); }} onBlurCapture={() => queueMicrotask(inputState)}>
         <span id={titleId} className="sr-only">{title}</span>
         {children}
-        {editing && <div className="input-accessory" aria-label="Input navigation" onPointerDown={event => event.preventDefault()}>
-          <button type="button" disabled={!hasNext || busy} onClick={nextInput}>next</button>
-          <button type="button" onClick={() => document.activeElement?.blur()}>done</button>
+        {hasInputs && <div className="input-accessory" aria-label="Input navigation" aria-hidden={!editing}
+          style={{visibility:editing?'visible':'hidden'}} onPointerDown={event => event.preventDefault()}>
+          <button type="button" disabled={!editing || !hasNext || busy} onClick={nextInput}>next</button>
+          <button type="button" disabled={!editing || busy} onClick={() => document.activeElement?.blur()}>done</button>
         </div>}
       </form>
     </div>, document.body,

@@ -1,3 +1,5 @@
+> **Retired:** Expensive no longer uses shared Firebase accounts. Use [Supabase-only setup and migration](supabase-auth.md) for the current app. The guide below is retained only as historical migration/rollback context; do not follow it for this release.
+
 # Connect another app to the shared accounts
 
 Use the same Firebase project as Expensive for authentication and the same identity service for usernames and emails. Give the new app its own Supabase project for its data.

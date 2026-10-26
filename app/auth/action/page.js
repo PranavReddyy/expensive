@@ -1,51 +1,49 @@
 "use client";
 import { useEffect, useRef, useState } from 'react';
-import { applyActionCode, verifyPasswordResetCode, confirmPasswordReset, reload } from 'firebase/auth';
-import { firebaseAuth, authMessage } from '../../../lib/firebase-client';
-import { readEmailAction } from '../../../lib/identity/account-email.mjs';
-
+import { supabase } from '../../../lib/supabase';
 export default function EmailActionPage() {
-  const [state, setState] = useState({ mode: '', code: '', message: 'Checking your link…' });
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [state, setState] = useState({ message: 'Checking your link…', recovery: false });
+  const [password, setPassword] = useState(''), [busy, setBusy] = useState(false);
   const pending = useRef(null);
   useEffect(() => {
     let active = true;
-    const { mode, code } = readEmailAction(window.location.href);
-    window.history.replaceState(window.history.state, '', window.location.pathname);
-    // Strict Mode can re-run effects. Consume each one-time email code once.
     pending.current ??= (async () => {
-      if (!code) throw new Error('Incomplete link');
-      const auth = firebaseAuth();
-      if (mode === 'verifyEmail') {
-        await applyActionCode(auth, code);
-        if (auth.currentUser) { await reload(auth.currentUser); await auth.currentUser.getIdToken(true); }
-        return { message: 'Email verified. Return to the app to continue.' };
+      const url = new URL(window.location.href);
+      const hash = new URLSearchParams(url.hash.slice(1));
+      const type = url.searchParams.get('type') || hash.get('type');
+      const tokenHash = url.searchParams.get('token_hash');
+      let result;
+      if (tokenHash && ['recovery','signup','email'].includes(type)) {
+        result = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
+      } else if (url.searchParams.get('code')) {
+        result = await supabase.auth.exchangeCodeForSession(url.searchParams.get('code'));
+      } else if (hash.get('access_token') && ['recovery','signup','email'].includes(type)) {
+        result = await supabase.auth.getSession();
+      } else {
+        throw new Error('This link is invalid or expired. Request a new email.');
       }
-      if (mode === 'resetPassword') {
-        await verifyPasswordResetCode(auth, code);
-        return { mode, code, message: 'Choose a new password for your shared account.' };
-      }
-      throw new Error('Unsupported link');
+      window.history.replaceState(window.history.state, '', '/auth/action');
+      if (result.error || !result.data?.session) throw new Error('This link is invalid or expired. Request a new email.');
+      return { recovery: type === 'recovery', message: type === 'recovery' ? 'Choose your new Expensive password.' : 'Email verified. Return to the app and sign in.' };
     })();
-    pending.current.then(result => { if (active) setState(result); })
-      .catch(() => { if (active) setState({ message: 'This link is invalid or expired. Request a new email from the app.' }); });
+    pending.current.then(s => { if (active) setState(s); }).catch(e => { if (active) setState({ message: e.message }); });
     return () => { active = false; };
   }, []);
   async function save(event) {
     event.preventDefault(); if (busy) return; setBusy(true);
     try {
-      await confirmPasswordReset(firebaseAuth(), state.code, password);
-      setPassword(''); setState({ message: 'Password updated. You can now sign in on any of our apps.' });
-    } catch (error) { setState(s => ({ ...s, message: authMessage(error) })); }
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
+      setPassword(''); setState({ message: 'Password updated. Sign in with it on your iPhone or the web.' });
+    } catch (e) { setState(s => ({ ...s, message: e.message })); }
     finally { setBusy(false); }
   }
   return <main style={{ maxWidth: 400, margin: '15vh auto', padding: 24, fontSize: 13 }}>
     <h1 style={{ fontSize: 18 }}>EXPENS***</h1><p role="status" style={{ margin: '24px 0', lineHeight: 1.7 }}>{state.message}</p>
-    {state.mode === 'resetPassword' && <form onSubmit={save} style={{ display: 'grid', gap: 16 }}>
-      <label>new password<input type="password" autoComplete="new-password" minLength={12} required value={password} onChange={e => setPassword(e.target.value)} style={{ display: 'block', padding: 12, border: '1px solid #ccc', width: '100%' }} /></label>
-      <button disabled={busy} style={{ padding: 12, background: 'var(--text)', color: 'var(--bg)' }}>{busy ? 'saving…' : 'save password'}</button>
+    {state.recovery && <form onSubmit={save} style={{ display:'grid', gap:16 }}>
+      <label>new password<input type="password" autoComplete="new-password" minLength={12} required value={password} onChange={e=>setPassword(e.target.value)} style={{display:'block',padding:12,width:'100%'}} /></label>
+      <button disabled={busy} style={{padding:12,background:'var(--text)',color:'var(--bg)'}}>{busy ? 'saving…' : 'save password'}</button>
     </form>}
-    <a href="/" style={{ display: 'inline-block', marginTop: 24 }}>back to sign in →</a>
+    <a href="/" style={{display:'inline-block',marginTop:24}}>back to sign in →</a>
   </main>;
 }

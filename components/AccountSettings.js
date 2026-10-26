@@ -5,6 +5,9 @@ import { usePreferences } from './Preferences';
 import { currencySymbols } from '../lib/format';
 import Modal from './Modal';
 import LogoutButton from './LogoutButton';
+import RecurringExpenses from './RecurringExpenses';
+import DataControls from './DataControls';
+import ProfileSettings from './ProfileSettings';
 export default function AccountSettings() {
   const { user } = useAuth();
   const { currency, appearance, update } = usePreferences();
@@ -20,6 +23,9 @@ export default function AccountSettings() {
       </div></fieldset>
       <label className="settings-field">currency <select value={currency} onChange={e => update({currency:e.target.value})}>{Object.entries(currencySymbols).map(([code,symbol]) => <option key={code} value={code}>{code} · {symbol}</option>)}</select></label>
       <p style={{fontSize:11,color:'var(--muted)'}}>Display symbol only. Existing amounts are not converted. Preferences stay on this device.</p>
+      <details className="settings-tools"><summary>recurring expenses</summary><RecurringExpenses /></details>
+      <details className="settings-tools"><summary>manage profiles</summary><ProfileSettings /></details>
+      <details className="settings-tools"><summary>categories, exports & data controls</summary><DataControls /></details>
       <div className="settings-actions"><LogoutButton /><button type="button" className="primary-action" onClick={() => setOpen(false)}>done</button></div>
     </Modal>}
   </>;

@@ -113,3 +113,28 @@ test('migration rerun preserves enrollment and ownership',async()=>{
  assert.equal((await enroll('firebase-owner','pranavreddymitta@gmail.com')).rows[0].id,owner);
  await asUser('firebase-new',async()=>assert.equal((await db.query('SELECT * FROM categories')).rows.length,5));
 });
+test('data deletion is server-only, isolated and leaves shared identity intact',async()=>{
+ await db.exec(await readFile(new URL('../ios/Database/activity-history.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../supabase-expense-upgrades.sql',import.meta.url),'utf8'));
+ const deletion=await readFile(new URL('../supabase-data-deletion.sql',import.meta.url),'utf8');
+ await db.exec(deletion);await db.exec(deletion);
+ await asUser('firebase-owner',()=>assert.rejects(db.query("SELECT delete_expensive_data('firebase-owner','test-identity')"),/permission denied/));
+ await role('anon',()=>assert.rejects(db.query("SELECT delete_expensive_data('firebase-owner','test-identity')"),/permission denied/));
+ await role('service_role',()=>assert.rejects(db.query("SELECT delete_expensive_data('firebase-owner','wrong-project')"),/Invalid identity/));
+ await role('service_role',async()=>{
+  await db.query("SELECT delete_expensive_data('firebase-owner','test-identity')");
+  await db.query("SELECT delete_expensive_data('firebase-owner','test-identity')");
+ });
+ await asUser('firebase-owner',async()=>{
+  assert.equal((await db.query('SELECT * FROM profiles')).rows.length,0);
+  assert.equal((await db.query('SELECT * FROM expenses')).rows.length,0);
+  assert.equal((await db.query('SELECT * FROM categories')).rows.length,0);
+ });
+ assert.equal((await enroll('firebase-owner','pranavreddymitta@gmail.com')).rows[0].id,owner);
+ assert.equal((await db.query('SELECT * FROM auth.users')).rows.length,2);
+ await asUser('firebase-new',async()=>{
+  assert.equal((await db.query('SELECT * FROM categories')).rows.length,5);
+  assert.equal((await db.query('SELECT * FROM profiles')).rows.length,1);
+ });
+ assert.equal((await db.query('SELECT payload FROM expense_requests WHERE user_id=$1',[owner])).rows.every(r=>r.payload.deleted===true),true);
+});

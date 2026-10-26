@@ -1,0 +1,16 @@
+.env*
+*firebase-adminsdk*.json
+*service-account*.json
+ios/WatchDeviceBuild/
+ios/DerivedData/
+ios/build/
+ios/Config/
+docs/
+scripts/
+tests/
+test-results/
+playwright-report/
+supabase/
+*.sql
+*.log
+.git/

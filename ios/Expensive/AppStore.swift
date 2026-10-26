@@ -1,5 +1,7 @@
 import Foundation
 import Observation
+import os
+import Network
 
 @MainActor @Observable final class AppStore {
     enum AuthStep { case signIn, verify, username }
@@ -16,17 +18,42 @@ import Observation
     var activeId: UUID?
     var revision = 0
     var ledgerReady = false
+    var pendingExpenses: [PendingExpense] = []
+    var syncingExpenses = false
+    var deletingData = false
+    var online = true
+    @ObservationIgnored private let networkMonitor = NWPathMonitor()
     private var snapshotGeneration = UUID()
     private var ledgerByProfile: [UUID: (people: [Person], debts: [Debt])] = [:]
     private var cache: [String: (Date, [Expense])] = [:]
+    var tripLists: [UUID: [Trip]] = [:]
+    var tripDetails: [UUID: TripSnapshot] = [:]
     private var refreshAgain = false
     private var lastRefresh: Date?
+    @ObservationIgnored private var liveRefresh: Task<Void, Never>?
     var active: Profile? { profiles.first { $0.id == activeId } }
     var tabs: [PersonTab] { people.map { person in PersonTab(person: person, entries: debts.filter { $0.personId == person.id && $0.remainingAmount > 0 }) } }
     var collect: Decimal { debts.filter { $0.direction == .collect }.reduce(0) { $0 + $1.remainingAmount } }
     var pay: Decimal { debts.filter { $0.direction == .pay }.reduce(0) { $0 + $1.remainingAmount } }
 
+    init() {
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                guard let self else { return }
+                let wasOffline = !self.online
+                self.online = path.status == .satisfied
+                if wasOffline && self.online && !self.starting && !self.validating {
+                    await self.flushExpenses(); await self.synchronizeIfStale()
+                }
+            }
+        }
+        networkMonitor.start(queue: DispatchQueue(label: "expensive.connectivity"))
+    }
+    deinit { networkMonitor.cancel() }
+
     func bootstrap() async {
+        let startedAt = ContinuousClock.now
+        defer { Logger(subsystem: "com.itsbypranav.expensive", category: "performance").debug("Bootstrap duration: \(String(describing: startedAt.duration(to: .now)), privacy: .public)") }
         guard !validating else { return }
         starting = true; validating = true; error = nil
         do {
@@ -48,6 +75,8 @@ import Observation
         }
         if user != nil {
             starting = false
+            loadPendingExpenses()
+            Task { await flushExpenses() }
             await refresh()
         }
         starting = false
@@ -75,6 +104,8 @@ import Observation
         CurrencyPreference.shared.load(user: next.id)
         clearData(); user = next; error = nil
         authStep = .signIn
+        loadPendingExpenses()
+        Task { await flushExpenses() }
         await refresh()
     }
     func logout() async throws {
@@ -83,11 +114,13 @@ import Observation
         CurrencyPreference.shared.load(user: nil)
     }
     private func clearData() {
+        liveRefresh?.cancel(); liveRefresh = nil
         if let owner = user?.id { SavedOverview.clear(owner: owner) }
         lastRefresh = nil
+        pendingExpenses = []
         ledgerReady = false; snapshotGeneration = UUID(); ledgerByProfile = [:]
         profiles = []; categories = []; people = []; debts = []; activeId = nil
-        cache = [:]; revision += 1
+        cache = [:]; tripLists = [:]; tripDetails = [:]; revision += 1
     }
     func handle(_ failure: Error) {
         if failure is CancellationError { return }
@@ -129,8 +162,10 @@ import Observation
         guard !validating, let owner = user?.id else { return }
         if loading { refreshAgain = true; return }
         let generation = snapshotGeneration
+        let startedAt = ContinuousClock.now
         loading = true
         defer {
+            Logger(subsystem: "com.itsbypranav.expensive", category: "performance").debug("Ledger refresh duration: \(String(describing: startedAt.duration(to: .now)), privacy: .public)")
             loading = false
             if refreshAgain { refreshAgain = false; Task { await refresh() } }
         }
@@ -182,18 +217,47 @@ import Observation
     }
     func synchronize() async {
         guard !validating else { return }
-        cache = [:]; revision += 1
+        // Keep useful rows visible while revalidating instead of making every
+        // period visited during sync fall back to an empty loading screen.
+        cache = cache.mapValues { (Date.distantPast, $0.1) }; revision += 1
         await refresh()
     }
     func synchronizeIfStale(now: Date = .now) async {
         guard !loading, user != nil else { return }
-        if let lastRefresh, now.timeIntervalSince(lastRefresh) < 60 { return }
+        if let lastRefresh, now.timeIntervalSince(lastRefresh) < 10 { return }
         await synchronize()
+    }
+    func watchChanges() async {
+        guard !validating, let owner = user?.id else { return }
+        var delay = 2
+        while !Task.isCancelled && user?.id == owner && !validating {
+            do {
+                try await API.shared.watchChanges(owner: owner) { [weak self] in
+                    await self?.scheduleLiveRefresh(owner: owner)
+                }
+                delay = 2
+            } catch {
+                if Task.isCancelled || user?.id != owner { return }
+                // REST remains usable when realtime is unavailable; the foreground
+                // fallback catches missed changes without discarding cached screens.
+            }
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            delay = min(delay * 2, 60)
+        }
+    }
+    private func scheduleLiveRefresh(owner: UUID) {
+        guard user?.id == owner, !validating else { return }
+        liveRefresh?.cancel()
+        liveRefresh = Task {
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+            guard user?.id == owner, !validating else { return }
+            await synchronize()
+        }
     }
     private func changed() async {
         if let owner = user?.id { SavedOverview.clear(owner: owner) }
         snapshotGeneration = UUID()
-        cache = [:]; revision += 1
+        cache = cache.mapValues { (Date.distantPast, $0.1) }; revision += 1
         await refresh()
     }
     func createProfile(id: UUID, name: String, balance: Decimal) async throws {
@@ -206,28 +270,111 @@ import Observation
         try await API.shared.write(Payload(pId: id, pProfile: profile, pAmount: amount, pMode: mode), path: "rpc/adjust_balance")
         await changed()
     }
+    func deleteProfile(_ profile: Profile, confirmation: String) async throws {
+        guard !pendingExpenses.contains(where: { $0.profile == profile.id }), !syncingExpenses else {
+            throw AppError.message("Sync or resolve pending expenses first.")
+        }
+        struct Payload: Encodable, Sendable { let pProfile: UUID; let pName: String }
+        try await API.shared.write(Payload(pProfile: profile.id, pName: confirmation), path: "rpc/delete_profile")
+        await changed()
+    }
     func transfer(id: UUID, from: UUID, to: UUID, amount: Decimal) async throws {
         struct Payload: Encodable, Sendable { let pId: UUID; let pFrom: UUID; let pTo: UUID; let pAmount: Decimal }
         try await API.shared.write(Payload(pId: id, pFrom: from, pTo: to, pAmount: amount), path: "rpc/transfer_money")
         await changed()
     }
-    func addExpense(id: UUID, profile: UUID, reason: String, amount: Decimal, category: UUID?, notes: String, date: Date) async throws {
+    func addExpense(id: UUID, profile: UUID, reason: String, amount: Decimal, category: UUID?, notes: String, date: Date, expectedOwner: UUID? = nil) async throws {
+        guard !validating, let owner = user?.id else { throw AppError.signedOut }
+        if let expectedOwner, expectedOwner != owner { throw AppError.signedOut }
+        var rows = try ExpenseOutbox.read(owner: owner)
+        let row = PendingExpense(owner: owner, id: id, profile: profile, reason: reason.trimmed, amount: amount, category: category, notes: notes.trimmed, date: date)
+        if let prior = rows.first(where: { $0.id == id }) {
+            guard prior.profile == profile, prior.reason == row.reason, prior.amount == amount, prior.category == category, prior.notes == row.notes, prior.date.ISO8601Format() == date.ISO8601Format() else { throw AppError.message("This draft ID was already used. Reopen the form.") }
+        } else { rows.append(row) }
+        try ExpenseOutbox.save(rows, owner: owner); pendingExpenses = rows
+        Task { await flushExpenses() }
+    }
+    func loadPendingExpenses() {
+        guard let owner = user?.id else { pendingExpenses = []; return }
+        do { pendingExpenses = try ExpenseOutbox.read(owner: owner) } catch { self.error = error.localizedDescription }
+    }
+    func discardRejectedExpense(_ id: UUID) throws {
+        guard !syncingExpenses, let owner = user?.id else { throw AppError.message("Wait for syncing to finish.") }
+        var rows = try ExpenseOutbox.read(owner: owner)
+        guard rows.contains(where: { $0.id == id && $0.blocked }) else { throw AppError.message("Retry this draft first to confirm whether it was saved.") }
+        rows.removeAll { $0.id == id }; try ExpenseOutbox.save(rows, owner: owner); pendingExpenses = rows
+    }
+    func flushExpenses(retry: Bool = false) async {
+        guard online, !syncingExpenses, !deletingData, !validating, let owner = user?.id else { return }
+        syncingExpenses = true
+        defer { syncingExpenses = false; if user?.id == owner { loadPendingExpenses() } }
         struct Payload: Encodable, Sendable {
             let pId: UUID; let pProfile: UUID; let pReason: String; let pAmount: Decimal
             let pCategory: UUID?; let pNotes: String; let pCreatedAt: Date
         }
-        try await API.shared.write(Payload(pId: id, pProfile: profile, pReason: reason.trimmed, pAmount: amount, pCategory: category, pNotes: notes.trimmed, pCreatedAt: date), path: "rpc/ios_add_expense")
-        await changed()
+        do {
+            for row in try ExpenseOutbox.read(owner: owner) {
+                guard user?.id == owner, !deletingData, !validating, !Task.isCancelled else { break }
+                if row.blocked && !retry { continue }
+                do {
+                    try await API.shared.write(Payload(pId: row.id, pProfile: row.profile, pReason: row.reason, pAmount: row.amount, pCategory: row.category, pNotes: row.notes, pCreatedAt: row.date), path: "rpc/ios_add_expense", expectedOwner: owner)
+                    var current = try ExpenseOutbox.read(owner: owner); current.removeAll { $0.id == row.id }
+                    try ExpenseOutbox.save(current, owner: owner)
+                    if user?.id == owner { pendingExpenses = current; await changed() }
+                } catch {
+                    var current = try ExpenseOutbox.read(owner: owner)
+                    if let index = current.firstIndex(where: { $0.id == row.id }) {
+                        current[index].error = error.localizedDescription
+                        if case AppError.rejected = error { current[index].blocked = true }
+                        else { current[index].blocked = false }
+                    }
+                    try ExpenseOutbox.save(current, owner: owner)
+                    if case AppError.signedOut = error { if user?.id == owner { handle(error) }; break }
+                    if case AppError.rejected = error { continue }
+                    break
+                }
+            }
+        } catch { if user?.id == owner { self.error = error.localizedDescription } }
+    }
+    func deleteExpensiveData(confirmation: String) async throws {
+        guard !validating, !deletingData, let owner = user?.id else { throw AppError.signedOut }
+        deletingData = true
+        defer { deletingData = false }
+        try await API.shared.deleteExpensiveData(owner: owner, confirmation: confirmation)
+        try ExpenseOutbox.save([], owner: owner)
+        guard user?.id == owner else { return }
+        pendingExpenses = []; clearData()
+        try await logout()
     }
     func delete(_ expense: Expense) async throws {
         struct Payload: Encodable, Sendable { let pId: UUID }
         try await API.shared.write(Payload(pId: expense.id), path: "rpc/ios_delete_expense")
         await changed()
     }
+    func editExpense(request: UUID, expense: Expense, reason: String, amount: Decimal, category: UUID?, notes: String, date: Date) async throws {
+        struct Payload: Encodable, Sendable {
+            let pRequest: UUID; let pId: UUID; let pVersion: Int; let pReason: String; let pAmount: Decimal
+            let pCategory: UUID?; let pNotes: String; let pCreatedAt: Date
+            // Explicit null is required when removing a category from an expense.
+            enum CodingKeys: String, CodingKey { case pRequest,pId,pVersion,pReason,pAmount,pCategory,pNotes,pCreatedAt }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(pRequest, forKey: .pRequest); try c.encode(pId, forKey: .pId)
+                try c.encode(pVersion, forKey: .pVersion); try c.encode(pReason, forKey: .pReason)
+                try c.encode(pAmount, forKey: .pAmount); try c.encode(pCategory, forKey: .pCategory)
+                try c.encode(pNotes, forKey: .pNotes); try c.encode(pCreatedAt, forKey: .pCreatedAt)
+            }
+        }
+        try await API.shared.write(Payload(pRequest: request, pId: expense.id, pVersion: expense.version ?? 1, pReason: reason.trimmed, pAmount: amount, pCategory: category, pNotes: notes.trimmed, pCreatedAt: date), path: "rpc/edit_expense")
+        await changed()
+    }
     func move(_ expense: Expense, to: UUID) async throws {
         struct Payload: Encodable, Sendable { let pId: UUID; let pFrom: UUID; let pTo: UUID }
         try await API.shared.write(Payload(pId: expense.id, pFrom: expense.profileId, pTo: to), path: "rpc/ios_move_expense")
         await changed()
+    }
+    func people(for profile: UUID) -> [Person] {
+        profile == activeId ? people : (ledgerByProfile[profile]?.people ?? [])
     }
     func addPerson(id: UUID, name: String, profile: UUID) async throws -> Person {
         let person = Person(id: id, profileId: profile, name: name.trimmed)
@@ -251,11 +398,11 @@ import Observation
         try await API.shared.write(Payload(pId: id), path: "rpc/undo_tab_payment")
         await changed()
     }
-    func settle(_ tab: PersonTab, payment: Decimal, id: UUID) async throws {
+    func settle(_ tab: PersonTab, payment: Decimal, id: UUID, onMe: Bool = false) async throws {
         struct Payload: Encodable, Sendable {
             let pId: UUID; let pProfile: UUID; let pPerson: UUID; let pPayment: Decimal; let pExpectedCollect: Decimal; let pExpectedPay: Decimal
         }
-        try await API.shared.write(Payload(pId: id, pProfile: tab.person.profileId, pPerson: tab.id, pPayment: payment, pExpectedCollect: tab.collect, pExpectedPay: tab.pay), path: "rpc/record_tab_payment")
+        try await API.shared.write(Payload(pId: id, pProfile: tab.person.profileId, pPerson: tab.id, pPayment: payment, pExpectedCollect: tab.collect, pExpectedPay: tab.pay), path: onMe ? "rpc/record_tab_on_me" : "rpc/record_tab_payment")
         await changed()
     }
 }

@@ -1,8 +1,7 @@
 "use client";
 import { useRef, useState } from "react";
 import { resetSession } from "../lib/useAppData";
-import { firebaseAuth } from "../lib/firebase-client";
-import { signOut } from "firebase/auth";
+import { signOut } from "../lib/supabase-auth";
 
 export default function LogoutButton({ style }) {
   const pending = useRef(false);
@@ -14,7 +13,7 @@ export default function LogoutButton({ style }) {
     setBusy(true);
     setError(false);
     try {
-      await signOut(firebaseAuth());
+      await signOut();
       resetSession();
       window.location.replace("/");
     } catch { setError(true); }

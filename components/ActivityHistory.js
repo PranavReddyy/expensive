@@ -1,4 +1,5 @@
 "use client";
+import LoadingState from './LoadingState';
 import { useState } from 'react';
 import { useQuery } from '../lib/useAppData';
 import { supabase } from '../lib/supabase';
@@ -29,11 +30,11 @@ export default function ActivityHistory({ profile, onClose }) {
     <h2 style={{fontSize:14}}>activity · {profile.name}</h2>
     <p className="history-note">Payments and balance adjustments. Undo corrects your records, not a real-world transfer. Only payments recorded after the history update can be undone.</p>
     {(error || loadError) && <p role="alert">{error || loadError.message}<button type="button" onClick={() => queryCache.invalidate(['account_activity'])}>retry</button></p>}
-    {pending && !data.length && <p>loading…</p>}
+    {pending && !data.length && <LoadingState label="loading history" />}
     {!pending && !loadError && !data.length && <p>No activity yet.</p>}
     {data.map(item => <section className="history-row" key={item.id}>
       <div style={{display:'flex',justifyContent:'space-between',gap:12}}><span>{item.title}</span><span>{fmt(item.amount)}</span></div>
-      <p className="history-note">{item.kind === 'balance' ? 'balance adjustment' : Number(item.balance_delta)>0 ? 'payment received' : Number(item.balance_delta)<0 ? 'payment made' : 'matching amounts cleared'} · {fmtFullExpenseDate(item.created_at)}</p>
+      <p className="history-note">{item.kind === 'balance' ? 'balance adjustment' : Number(item.balance_delta)>0 ? 'payment received' : Number(item.balance_delta)<0 ? 'payment made' : Number(item.amount)>0 ? 'On me.' : 'matching amounts cleared'} · {fmtFullExpenseDate(item.created_at)}</p>
       {item.undone_at ? <small>undone</small> : item.kind === 'settlement' && (confirmId === item.id ? <div><p className="history-note">Restore the balance and tab amounts and remove any expense created by this payment?</p><button type="button" disabled={busy} onClick={() => setConfirmId(null)}>cancel</button> <button type="button" className="primary-action" disabled={busy} onClick={() => undo(item.id)}>{busy ? 'undoing…' : 'confirm undo'}</button></div> : <button type="button" disabled={busy} onClick={() => setConfirmId(item.id)}>undo payment</button>)}
     </section>)}
     <button type="button" className="primary-action" disabled={busy} onClick={onClose}>done</button>

@@ -10,18 +10,19 @@
     "build": "next build",
     "start": "next start",
     "test": "node --test tests/*.test.mjs",
+    "test:browser": "playwright test --config tests/browser/playwright.config.mjs",
     "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
-    "firebase": "^12.19.0",
-    "firebase-admin": "^14.5.0",
     "next": "^15.5.24",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
+    "@playwright/test": "^1.64.1",
+    "firebase-admin": "^14.5.0",
     "sharp": "^0.35.5"
   },
   "overrides": {

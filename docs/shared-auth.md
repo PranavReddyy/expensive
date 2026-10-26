@@ -1,3 +1,5 @@
+> **Retired:** Expensive no longer uses shared Firebase accounts. Use [Supabase-only setup and migration](supabase-auth.md) for the current app. The guide below is retained only as historical migration/rollback context; do not follow it for this release.
+
 # Shared Firebase accounts
 
 One Firebase project owns email/password accounts. One Firestore database reserves usernames. Each app has its own Supabase project for its own data. Expensive hosts the initial identity API at `https://expensive.itsbypranav.com`.

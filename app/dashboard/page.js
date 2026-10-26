@@ -1,4 +1,7 @@
 "use client";
+import { amountValue, validAmount } from '../../lib/amount.mjs';
+import AmountInput from '../../components/AmountInput';
+import { expenseOutbox } from '../../lib/offline-expenses';
 import { useState, useMemo, useRef } from "react";
 import AccountSettings from "../../components/AccountSettings";
 import { usePreferences } from "../../components/Preferences";
@@ -6,6 +9,7 @@ import { fmt, currencySymbol } from "../../lib/format";
 import { useProfiles, useCategories, useExpenses, useDebts } from "../../lib/useAppData";
 import { summarizeTabs } from "../../lib/tabs.mjs";
 import DataStatus from "../../components/DataStatus";
+import LoadingState from "../../components/LoadingState";
 import Link from "next/link";
 import LogoutButton from "../../components/LogoutButton";
 import Modal from "../../components/Modal";
@@ -61,15 +65,15 @@ export default function Dashboard() {
 
   async function transferMoney() {
     setErr('');
-    if (!transfer.to || !/^\d+(\.\d{1,2})?$/.test(transfer.amount) || Number(transfer.amount) <= 0) {
+    if (!transfer.to || !validAmount(transfer.amount) || amountValue(transfer.amount) <= 0) {
       setErr('Choose an account and enter a valid amount.'); return;
     }
     setSubmitting(true);
     try {
-      const { error } = await supabase.rpc('transfer_money', { p_id: transfer.id, p_from: activeId, p_to: transfer.to, p_amount: Number(transfer.amount) });
+      const { error } = await supabase.rpc('transfer_money', { p_id: transfer.id, p_from: activeId, p_to: transfer.to, p_amount: amountValue(transfer.amount) });
       if (error) throw error;
       queryCache.invalidate(['profiles']);
-      setNotice(`${fmt(transfer.amount)} transferred to ${profiles.find(p => p.id === transfer.to)?.name}`);
+      setNotice(`${fmt(amountValue(transfer.amount))} transferred to ${profiles.find(p => p.id === transfer.to)?.name}`);
       setModal(null);
     } catch (e) { setErr(e.message); }
     finally { setSubmitting(false); }
@@ -79,12 +83,12 @@ export default function Dashboard() {
 
   async function addExpense() {
     setErr("");
-    const amount = Number(form.amount);
+    const amount = amountValue(form.amount);
     if (!form.reason.trim()) {
       setErr("reason is required");
       return;
     }
-    if (!Number.isFinite(amount) || amount <= 0) {
+    if (!validAmount(form.amount) || !Number.isFinite(amount) || amount <= 0 || amount>=1e10) {
       setErr("enter a valid amount");
       return;
     }
@@ -96,19 +100,18 @@ export default function Dashboard() {
 
     const signature = JSON.stringify([activeId,form]);
     if (expenseRequest.current?.signature !== signature) expenseRequest.current = {signature,id:crypto.randomUUID()};
-    const { error: e1 } = await supabase.rpc('ios_add_expense', {
+    try { await expenseOutbox.enqueue(user.id, {
       p_id:expenseRequest.current.id, p_profile:activeId, p_reason:form.reason.trim(),
       p_amount:amount, p_notes:form.notes.trim(), p_category:form.category_id || null,
       p_created_at:new Date(form.datetime).toISOString(),
-    });
-    if (e1) {
-      setErr(e1.message);
+    }); } catch(error) {
+      setErr(error.message);
       setSubmitting(false);
       return;
     }
 
     expenseRequest.current = null;
-    queryCache.invalidate(['profiles','expenses']);
+    void expenseOutbox.flush(user.id).catch(()=>{});
 
     setForm({
       reason: "",
@@ -123,8 +126,8 @@ export default function Dashboard() {
 
   async function updateBalance() {
     setErr("");
-    const bal = Number(balanceInput);
-    if (!/^-?\d+(\.\d{1,2})?$/.test(balanceInput) || !Number.isFinite(bal) || (balanceMode !== 'set' && bal <= 0)) {
+    const bal = amountValue(balanceInput);
+    if (!validAmount(balanceInput,true) || !Number.isFinite(bal) || (balanceMode !== 'set' && bal <= 0)) {
       setErr("enter a valid amount");
       return;
     }
@@ -151,7 +154,7 @@ export default function Dashboard() {
       return;
     }
     setSubmitting(true);
-    const bal = Number(profileForm.balance || 0);
+    const bal = amountValue(profileForm.balance || 0);
     if (!Number.isFinite(bal)) {
       setErr("enter a valid balance");
       setSubmitting(false);
@@ -259,25 +262,30 @@ export default function Dashboard() {
             <p style={{ fontSize: 10, color: 'var(--muted)' }}>
               after settlement {fmt(Number(active.balance) + tabs.collect - tabs.pay)}
             </p>
-            {profiles.length > 1 && <button type="button" style={{ ...s.editBtn, marginTop: 12 }} onClick={() => openModal('transfer')}>transfer money →</button>}
           </div>
         )}
 
         {active && (
+          <div className="home-actions">
           <button
             type="button"
-            style={s.addBtn}
+            style={{...s.addBtn,flex:1,width:'auto',marginBottom:0,minWidth:0}}
             onClick={() => openModal("add")}
           >
             + log expense
           </button>
+          {profiles.length > 1 && <button className="home-secondary-action" type="button" onClick={()=>openModal('transfer')}>transfer</button>}
+          <Link href="/trips" className="home-secondary-action home-trips-icon" aria-label="Trips" title="Trips">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M8 7v14M16 7v14"/></svg>
+          </Link>
+          </div>
         )}
 
         {notice && <p role="status" style={{ fontSize: 11, marginBottom: 12 }}>{notice}</p>}
         {active && (
           <section style={s.section}>
             <p style={s.sectionLabel}>spending · {now.toLocaleDateString("en-IN", { month: "long" })}</p>
-            {monthError && !monthExpenses.length ? <p style={s.noData}>Could not load the spending overview.</p> : monthPending && !monthExpenses.length ? <p style={s.noData}>loading overview…</p> : <>
+            {monthError && !monthExpenses.length ? <p style={s.noData}>Could not load the spending overview.</p> : monthPending && !monthExpenses.length ? <LoadingState label="loading overview" /> : <>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 {[["spent today", fmt(overview.today)], ["spent this month", fmt(overview.month)]].map(([label, value]) => (
                   <div key={label} style={{ border: "1px solid var(--border-light)", padding: 12, minWidth: 0 }}>
@@ -342,7 +350,7 @@ export default function Dashboard() {
               </select>
             </div>
             <div style={s.mField}><label htmlFor="transfer-amount" style={s.mLabel}>amount ({currencySymbol()})</label>
-              <input id="transfer-amount" style={s.mInput} inputMode="decimal" disabled={submitting} value={transfer.amount} onChange={e => setTransfer(t => ({ ...t, amount: e.target.value, id: crypto.randomUUID() }))} />
+              <AmountInput id="transfer-amount" style={s.mInput} inputMode="decimal" disabled={submitting} value={transfer.amount} onChange={e => setTransfer(t => ({ ...t, amount: e.target.value, id: crypto.randomUUID() }))} />
             </div>
             <p style={s.mLabel}>Moves money between these accounts. Your total money and spending stay the same.</p>
             {err && <p role="alert" style={s.mErr}>{err}</p>}
@@ -370,7 +378,7 @@ export default function Dashboard() {
                 <label htmlFor="expense-amount" style={s.mLabel}>
                   amount ({currencySymbol()}) *
                 </label>
-                <input
+                <AmountInput
                   style={s.mInput}
                   type="text"
                   inputMode="decimal"
@@ -403,7 +411,7 @@ export default function Dashboard() {
                 <div style={s.mField}>
                   <label style={s.mLabel}>category</label>
                   <div style={s.catGrid}>
-                    {categories.map((c) => (
+                    {categories.filter(c=>!c.archived).map((c) => (
                       <button
                         type="button"
                         key={c.id}
@@ -465,7 +473,7 @@ export default function Dashboard() {
                 <label htmlFor="balance-input" style={s.mLabel}>
                   {balanceMode === 'set' ? 'current money in this account' : `amount to ${balanceMode}`}
                 </label>
-                <input
+                <AmountInput
                   style={s.mInput}
                   type="text"
                   inputMode="decimal"
@@ -514,7 +522,7 @@ export default function Dashboard() {
                 <label htmlFor="profile-balance" style={s.mLabel}>
                   starting balance ({currencySymbol()})
                 </label>
-                <input
+                <AmountInput
                   style={s.mInput}
                   type="text"
                   inputMode="decimal"
@@ -765,12 +773,14 @@ const s = {
   },
 
   catGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
+    display: "flex",
+    overflowX: "auto",
     gap: "6px",
   },
   catBtn: {
     display: "flex",
+    flexShrink: 0,
+    borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
     padding: "9px 6px",

@@ -5,6 +5,7 @@ import { usePreferences } from "../../components/Preferences";
 import ChartInspector from "../../components/ChartInspector";
 import { periodInsights, projectedBalance } from "../../lib/period-insights.mjs";
 import { useProfiles, useExpenses, usePageState } from "../../lib/useAppData";
+import LoadingState from '../../components/LoadingState';
 import DataStatus from "../../components/DataStatus";
 import Nav from "../../components/Nav";
 import AccountSwitcher from "../../components/AccountSwitcher";
@@ -483,7 +484,7 @@ export default function AnalyticsPage() {
 
   const range = getPeriodRange(filter, periodDate);
   const previous = getPeriodRange(filter, shiftPeriod(periodDate, filter, -1));
-  const { data: expenses } = useExpenses(activeId, {
+  const { data: expenses, pending: expensesPending, hasData: expensesReady, error: expensesError } = useExpenses(activeId, {
     start: previous.start.toISOString(), end: range.end.toISOString(), ascending: true,
   });
 
@@ -577,6 +578,8 @@ export default function AnalyticsPage() {
         </div>
 
         <AccountSwitcher profiles={profiles} activeId={activeId} onChange={switchProfile} />
+        {expensesPending && <LoadingState label={expensesReady?'refreshing analytics':'loading analytics'} />}
+        {expensesError && <p role="alert" style={{fontSize:11,color:'var(--muted)'}}>Could not load analytics. Try again when connected.</p>}
 
         <div style={s.filterBar}>
           {filters.map((f) => (
@@ -618,6 +621,7 @@ export default function AnalyticsPage() {
         </div>
 
         {/* Primary stats */}
+        {expensesReady && <>
         <div style={s.statsGrid}>
           <div style={s.statBox}>
             <p style={s.statLabel}>total spent</p>
@@ -821,6 +825,7 @@ export default function AnalyticsPage() {
             )}
           </div>
         )}
+        </>}
       </div>
       <Nav />
     </div>

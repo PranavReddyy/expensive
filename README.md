@@ -7,11 +7,15 @@ A simple place to see what you have, what you spent, and what people owe you.
 ## What you can do
 
 - **Home** shows your current balance, spending today and this month, a seven-day snapshot, and your top categories. Keep separate profiles for different pools of money.
-- **Expenses** lets you log purchases, add notes and categories, and browse previous days, weeks, months, or years.
+- **Expenses** lets you log and edit purchases, add notes and categories, sort amounts, and browse previous days, weeks, months, or years. Edits adjust the balance by the difference.
 - **Analytics** shows spending trends, touch-to-inspect charts, category shares, your three largest expenses, no-spend days, and clearly labelled spending estimates.
-- **Tabs** keeps one running amount per person. Track what they owe you or what you owe them, split a payment, and record when someone pays.
-- **Shared account** uses your email, password, and unique username across our apps. Your expenses stay private to your account.
+- **Tabs** keeps one running amount per person. Split equally or enter custom shares—the final blank share is calculated for you. Record payments, safely undo mistakes, or choose **On me.** to make an amount your own expense.
+- **Trips** keeps a private trip budget, dates, participants, equal/custom splits and a settlement summary linked to Tabs. [How trips work](docs/trips.md).
+- **Sign-in** uses Supabase email/password and a unique username for Expensive. Accounts are no longer shared across apps.
 - **Account settings** includes System, Light, and Dark appearance and a preferred currency symbol. This changes the display only, not the amounts or exchange rates.
+- **Recurring expenses** reminds you what is due weekly, monthly, or yearly. Review and record, skip, or pause; nothing is deducted automatically.
+- **Your data** includes category management, CSV exports, profile deletion with confirmation, and deletion of Expensive's data without deleting your Expensive sign-in.
+- **Pending expenses** keeps new expense drafts on your device when a save cannot finish. They sync to their original account and stay separate from the confirmed balance.
 
 ## How to use it
 
@@ -20,10 +24,12 @@ A simple place to see what you have, what you spent, and what people owe you.
 3. Use **+ log expense** on Home whenever you spend. The amount comes off that profile's balance. Use Expenses to find past entries.
 4. Open **Tabs → + add amount** for money shared with someone. Search their name, or add it there if they're new. Use **split** for a group, then **record payment** as people settle up. The small history button shows activity and lets you undo accidental payments when the related records haven't changed.
 5. If you move money between your own profiles, use **transfer money** on Home. Transfers don't count as spending.
-6. Tap **edit** beside your balance to Set, Add, or Subtract money. These adjustments don't count as expenses. Open your account name for appearance, currency, and sign-out.
+6. Tap **edit** beside your balance to Set, Add, or Subtract money. These adjustments don't count as expenses. Open your account name for appearance, currency, recurring schedules, categories, exports, and sign-out.
 
 Tabs and balances stay linked: money you've paid on someone's behalf leaves your balance; an amount you owe leaves it when you record the payment. Home shows the balance you have now, alongside what settlement would change.
 
 ## Good to know
 
 Expens\*\*\* doesn't connect to a bank, import transactions, request payments, or move real money. You keep balances current by logging expenses, transfers, and payments. Profiles are your own pools of money, not separate logins.
+
+An internet connection is still needed to sign in/verify a restored session, settle tabs, edit confirmed records, and review recurring expenses. A pending draft is not a confirmed charge. Don't clear browser/app storage while drafts are pending. Recurring schedules are reviewed inside the app; they do not send push notifications.

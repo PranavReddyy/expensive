@@ -2,6 +2,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { fmt, fmtFullExpenseDate } from "../../lib/format";
 import { useProfiles, useCategories, useExpenses, usePageState } from "../../lib/useAppData";
+import LoadingState from '../../components/LoadingState';
 import DataStatus from "../../components/DataStatus";
 import Modal from "../../components/Modal";
 import Nav from "../../components/Nav";
@@ -9,6 +10,7 @@ import AccountSwitcher from "../../components/AccountSwitcher";
 import { supabase } from "../../lib/supabase";
 import { queryCache } from "../../lib/query-cache.mjs";
 import { usePreferences } from "../../components/Preferences";
+import ExpenseEditor from "../../components/ExpenseEditor";
 
 function getPeriodRange(filter, periodDate = new Date()) {
   if (filter === "all") return null;
@@ -83,10 +85,12 @@ export default function ExpensesPage() {
   const [transferTargetId, setTransferTargetId] = useState("");
   const [transferring, setTransferring] = useState(false);
   const [tErr, setTErr] = useState("");
+  const [editing,setEditing] = useState(null);
+  const [sort,setSort] = usePageState('expenses:sort','newest');
 
   const categories = useCategories();
   const range = getPeriodRange(filter, periodDate);
-  const { data: expenses } = useExpenses(activeId, {
+  const { data: expenses, pending: expensesPending, hasData: expensesReady, error: expensesError } = useExpenses(activeId, {
     start: range?.start.toISOString(), end: range?.end.toISOString(),
   });
 
@@ -94,8 +98,9 @@ export default function ExpensesPage() {
   const otherProfiles = useMemo(() => profiles.filter((p) => p.id !== activeId), [profiles, activeId]);
 
   const visibleExpenses = useMemo(() =>
-    categoryFilter === "all" ? expenses : expenses.filter((e) => e.category_id === categoryFilter),
-    [expenses, categoryFilter],
+    (categoryFilter === "all" ? [...expenses] : expenses.filter((e) => e.category_id === categoryFilter))
+      .sort((a,b) => (sort === 'highest' ? Number(b.amount)-Number(a.amount) : sort === 'lowest' ? Number(a.amount)-Number(b.amount) : sort === 'oldest' ? new Date(a.created_at)-new Date(b.created_at) : new Date(b.created_at)-new Date(a.created_at)) || a.id.localeCompare(b.id)),
+    [expenses, categoryFilter, sort],
   );
   const totalFiltered = useMemo(() =>
     visibleExpenses.reduce((sum, e) => sum + parseFloat(e.amount), 0),
@@ -189,6 +194,7 @@ export default function ExpensesPage() {
                   <p style={s.amount}>{fmt(e.amount)}</p>
                 </div>
                 <div style={s.rowActions}>
+                  <button type="button" style={s.actionBtn} onClick={()=>setEditing(e)}>edit</button>
                   {otherProfiles.length > 0 && (
                     <button type="button"
                       style={s.actionBtn}
@@ -222,6 +228,8 @@ export default function ExpensesPage() {
 
         {/* Profile tabs */}
         <AccountSwitcher profiles={profiles} activeId={activeId} onChange={switchProfile} />
+        {expensesPending && <LoadingState label={expensesReady?'refreshing expenses':'loading expenses'} />}
+        {expensesError && <p role="alert" style={{fontSize:11,color:'var(--muted)'}}>Could not load expenses. Pull to refresh or try again.</p>}
 
         {/* Time filter bar */}
         <div style={s.filterBar}>
@@ -286,7 +294,7 @@ export default function ExpensesPage() {
                   ...s.catFilterBtn,
                   ...(categoryFilter === c.id ? s.catFilterActive : {}),
                 }}
-                onClick={() => setCategoryFilter(c.id)}
+              onClick={() => setCategoryFilter(categoryFilter === c.id ? 'all' : c.id)}
               >
                 {c.name}
               </button>
@@ -294,6 +302,9 @@ export default function ExpensesPage() {
           </div>
         )}
 
+        <label style={{display:'block',fontSize:11,margin:'12px 0'}}>sort <select value={sort} onChange={e=>setSort(e.target.value)}>
+          <option value="newest">newest first</option><option value="oldest">oldest first</option><option value="highest">highest amount</option><option value="lowest">lowest amount</option>
+        </select></label>
         {/* Summary */}
         {visibleExpenses.length > 0 && (
           <div style={s.summary}>
@@ -313,10 +324,11 @@ export default function ExpensesPage() {
             {expenseRows}
           </div>
         ) : (
-          <p style={s.empty}>no expenses for this period.</p>
+          expensesReady && !expensesError ? <p style={s.empty}>no expenses for this period.</p> : null
         )}
       </div>
 
+      {editing && <ExpenseEditor expense={editing} categories={categories} onClose={()=>setEditing(null)}/>}
       {/* Transfer Modal */}
       {transferExpense && (
         <Modal title="transfer expense" style={s.modal} overlayStyle={s.overlay}
